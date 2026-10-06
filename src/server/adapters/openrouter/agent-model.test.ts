@@ -413,6 +413,40 @@ describe("tool-capable OpenRouter adapter", () => {
     expect(cancelled).toHaveBeenCalledOnce();
   });
 
+  it.each([false, true])("reports failed reader cleanup without masking cancellation when the sink throws: %s", async throwingSink => {
+    const body = new ReadableStream<Uint8Array>({
+      cancel() { return Promise.reject(new Error("secret stream contents")); },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+    const diagnostics = vi.fn(() => {
+      if (throwingSink) {
+        throw new Error("diagnostic sink failed");
+      }
+    });
+    const model = createOpenRouterAgentModel(config, fetcher, diagnostics);
+    const controller = new AbortController();
+    const pending = model.complete(request({ signal: controller.signal }));
+    await vi.waitFor(() => expect(body.locked).toBe(true));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "cancelled" });
+    await vi.waitFor(() => expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ category: "cleanup_failed" })));
+    expect(body.locked).toBe(false);
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("secret stream");
+  });
+
+  it("reports failed response disposal while preserving the provider failure", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      cancel() { return Promise.reject(new Error("secret cleanup failure")); },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 503 }));
+    const diagnostics = vi.fn();
+    const model = createOpenRouterAgentModel(config, fetcher, diagnostics);
+    await expect(model.complete(request())).rejects.toMatchObject({ code: "provider" });
+    await vi.waitFor(() => expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ category: "cleanup_failed" })));
+    expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ category: "http", status: 503 }));
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("secret cleanup");
+  });
+
   it("sanitizes network failures and ignores diagnostic sink failures", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error("secret-key secret-prompt"));
     const diagnostics = vi.fn(() => { throw new Error("sink failed"); });

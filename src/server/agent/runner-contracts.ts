@@ -6,8 +6,8 @@ export type AgentFailureCode = "configuration" | "protocol" | "provider" | "time
   | "deadline" | "budget_exhausted" | "context_limit" | "persistence" | "internal";
 
 export class AgentRunnerError extends Error {
-  constructor(public readonly code: AgentFailureCode, message: string) {
-    super(message);
+  constructor(public readonly code: AgentFailureCode, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "AgentRunnerError";
   }
 }
@@ -34,11 +34,15 @@ export type AgentRunInput<TContext, TOutcome, TArtifact = never> = {
   // One caller-owned absolute run deadline, in milliseconds since Unix epoch.
   deadline: number;
   limits?: Partial<AgentLimits>;
+  // The adapter must complete or reject started writes. The runner deliberately
+  // does not race them against cancellation because terminal writes can commit.
   checkpoint(event: AgentCheckpoint<TOutcome, TArtifact>): Promise<void>;
 };
 
 export type RunnerPhase = "configuration" | "preflight" | "model" | "checkpoint" | "action" | "tool";
 export type AgentDiagnostic = {
+  // Internal categories preserve the boundary failure without exposing error text.
+  origin?: { boundary: "model" | "context" | "checkpoint"; category: string };
   category: AgentFailureCode;
   phase: RunnerPhase;
   modelRequests: number;

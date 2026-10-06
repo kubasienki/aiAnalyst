@@ -5,6 +5,7 @@ import {
   assistantMessageSchema, modelMessageSchema, providerReplaySchema,
   type ModelMessage, type ModelRequest, type ModelResponse, type ProviderReplay,
 } from "../../agent/contracts";
+import { inspectMessageSequence } from "../../agent/message-sequence";
 import { ModelError } from "../../agent/errors";
 import { jsonValueSchema } from "../../contracts/json";
 import { safeIdentifier, type CompletionEnvelope } from "./transport";
@@ -29,29 +30,6 @@ const requestSchema = z.strictObject({
 
 function invalidRequest(): never {
   throw new ModelError("invalid_request", "The model request is invalid.");
-}
-
-function validateSequence(messages: ModelMessage[]): void {
-  const pendingCalls = new Set<string>();
-  for (const message of messages) {
-    if (message.role === "tool") {
-      if (!pendingCalls.delete(message.callId)) {
-        invalidRequest();
-      }
-      continue;
-    }
-    if (pendingCalls.size > 0) {
-      invalidRequest();
-    }
-    if (message.role === "assistant") {
-      for (const call of message.toolCalls) {
-        pendingCalls.add(call.callId);
-      }
-    }
-  }
-  if (pendingCalls.size > 0) {
-    invalidRequest();
-  }
 }
 
 function serializeMessage(message: ModelMessage): Record<string, unknown> {
@@ -101,7 +79,10 @@ export function serializeRequest(request: ModelRequest, model: string): Record<s
   if (validated.toolSelection.kind === "specific" && !toolNames.has(validated.toolSelection.name)) {
     invalidRequest();
   }
-  validateSequence(validated.messages);
+  const sequence = inspectMessageSequence(validated.messages);
+  if (!sequence.valid || sequence.pendingCallIds.size > 0) {
+    invalidRequest();
+  }
 
   const replayProviders = new Set<string>();
   let replayModel: string | undefined;

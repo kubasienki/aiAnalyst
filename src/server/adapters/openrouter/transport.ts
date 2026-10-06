@@ -5,7 +5,7 @@ import { ModelError } from "../../agent/errors";
 export const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export type OpenRouterConfig = { apiKey: string; model: string; maxResponseBytes?: number };
-type FailureCategory = "network" | "http" | "invalid_response" | "completion_error" | "truncated" | "filtered" | "timeout" | "deadline" | "response_limit";
+type FailureCategory = "network" | "http" | "invalid_response" | "completion_error" | "truncated" | "filtered" | "timeout" | "deadline" | "response_limit" | "cleanup_failed";
 
 export type OpenRouterDiagnostic = {
   category: FailureCategory;
@@ -34,10 +34,14 @@ export function safeIdentifier(value: unknown): string | undefined {
   return undefined;
 }
 
-function stopReading(body: ReadableStream<Uint8Array> | null): void {
+function stopReading(body: ReadableStream<Uint8Array> | null, reportCleanupFailure: () => void): void {
   // Cleanup is best effort; it must not replace the original provider failure.
   if (body) {
-    void body.cancel().catch(() => undefined);
+    try {
+      void body.cancel().catch(reportCleanupFailure);
+    } catch {
+      reportCleanupFailure();
+    }
   }
 }
 
@@ -62,7 +66,12 @@ function withAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function readBody(response: Response, signal: AbortSignal, byteLimit: number): Promise<string> {
+async function readBody(
+  response: Response,
+  signal: AbortSignal,
+  byteLimit: number,
+  reportCleanupFailure: () => void,
+): Promise<string> {
   if (!response.body) {
     throw new ModelError("invalid_response", "The AI provider returned an empty response.");
   }
@@ -84,7 +93,11 @@ async function readBody(response: Response, signal: AbortSignal, byteLimit: numb
       fragments.push(decoder.decode(chunk.value, { stream: true }));
     }
   } catch (error) {
-    void reader.cancel().catch(() => undefined);
+    try {
+      void reader.cancel().catch(reportCleanupFailure);
+    } catch {
+      reportCleanupFailure();
+    }
     if (error instanceof TypeError) {
       throw new ModelError("invalid_response", "The AI provider returned an unreadable response.");
     }
@@ -150,6 +163,16 @@ export function createOpenRouterTransport(
     const timeout = AbortSignal.timeout(Math.min(60_000, remainingMs));
     const requestSignal = AbortSignal.any([options.signal, timeout]);
     const diagnostic: OpenRouterDiagnostic = { category: "network", model: config.model };
+    function reportDiagnostic(category: FailureCategory): void {
+      try {
+        reportFailure({ ...diagnostic, category, elapsedMs: Date.now() - startedAt });
+      } catch {
+        // Diagnostics are best effort and contain no request/response contents.
+      }
+    }
+    function reportCleanupFailure(): void {
+      reportDiagnostic("cleanup_failed");
+    }
     // Timers can be delayed by a busy event loop. Check wall-clock budgets too,
     // including after synchronous response parsing/validation.
     const requestDeadline = Math.min(startedAt + 60_000, options.deadline ?? Infinity);
@@ -175,7 +198,7 @@ export function createOpenRouterTransport(
         // Native fetch obeys abort. Injected/custom transports may resolve later;
         // dispose their body even after the caller has stopped waiting.
         if (requestSignal.aborted) {
-          stopReading(response.body);
+          stopReading(response.body, reportCleanupFailure);
         }
         return response;
       });
@@ -185,17 +208,17 @@ export function createOpenRouterTransport(
       try {
         checkExecutionBudget();
       } catch (error) {
-        stopReading(response.body);
+        stopReading(response.body, reportCleanupFailure);
         throw error;
       }
 
       if (!response.ok && response.status !== 400) {
         diagnostic.category = "http";
-        stopReading(response.body);
+        stopReading(response.body, reportCleanupFailure);
         throw new ModelError("provider", "The AI provider could not complete the request. Please retry.");
       }
       diagnostic.category = "invalid_response";
-      const responseBody = await readBody(response, requestSignal, byteLimit);
+      const responseBody = await readBody(response, requestSignal, byteLimit, reportCleanupFailure);
       checkExecutionBudget();
       let payload: unknown;
       if (!response.ok) {
@@ -254,13 +277,7 @@ export function createOpenRouterTransport(
       if (error instanceof ModelError && (error.code === "deadline" || error.code === "timeout")) {
         diagnostic.category = error.code;
       }
-      diagnostic.elapsedMs = Date.now() - startedAt;
-      // A diagnostic sink must never mask the original failure.
-      try {
-        reportFailure(diagnostic);
-      } catch {
-        // Diagnostics are best effort and contain no request/response contents.
-      }
+      reportDiagnostic(diagnostic.category);
       if (error instanceof ModelError) {
         throw error;
       }

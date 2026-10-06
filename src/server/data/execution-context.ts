@@ -1,3 +1,4 @@
+import { createExecutionScope, executionStopReason, ExecutionStopped, validExecutionSettings } from "../execution/scope";
 import { DataQueryError } from "./errors";
 import type { ExecutionContext } from "./types";
 
@@ -8,9 +9,12 @@ type ExecutionOptions = {
 };
 
 export function createExecutionContext(options: ExecutionOptions = {}): ExecutionContext {
+  const signal = options.signal ?? new AbortController().signal;
+  const deadline = options.deadline ?? Date.now() + 120_000;
+  validateSettings(signal, deadline);
   return {
-    signal: options.signal ?? new AbortController().signal,
-    deadline: options.deadline ?? Date.now() + 120_000,
+    signal,
+    deadline,
     budget: {
       attemptsUsed: 0,
       maxAttempts: 4,
@@ -20,48 +24,37 @@ export function createExecutionContext(options: ExecutionOptions = {}): Executio
   };
 }
 
-export function checkExecution(context: ExecutionContext): void {
-  if (context.signal.aborted) {
-    throw new DataQueryError("cancelled", "Query execution was cancelled.");
+function validateSettings(signal: AbortSignal, deadline: number): void {
+  if (!validExecutionSettings(signal, deadline)) {
+    throw new DataQueryError("invalid_input", "Query execution settings are invalid.");
   }
-  if (Date.now() >= context.deadline) {
-    throw new DataQueryError("deadline", "The execution deadline was reached.");
+}
+
+function stopError(reason: "cancelled" | "deadline"): DataQueryError {
+  return new DataQueryError(reason, reason === "cancelled"
+    ? "Query execution was cancelled."
+    : "The execution deadline was reached.");
+}
+
+export function checkExecution(context: ExecutionContext): void {
+  validateSettings(context.signal, context.deadline);
+  const reason = executionStopReason(context.signal, context.deadline);
+  if (reason) {
+    throw stopError(reason);
   }
 }
 
 // Bounds the caller's wait; it does not cancel the underlying SDK request.
-export function withinDeadline<T>(work: Promise<T>, context: ExecutionContext): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-
-    function finish(action: () => void): void {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(deadlineTimer);
-      context.signal.removeEventListener("abort", onAbort);
-      action();
+export async function withinDeadline<T>(work: Promise<T>, context: ExecutionContext): Promise<T> {
+  const scope = createExecutionScope(context.signal, context.deadline);
+  try {
+    return await scope.wait(work);
+  } catch (error) {
+    if (error instanceof ExecutionStopped) {
+      throw stopError(error.reason);
     }
-
-    function onAbort(): void {
-      finish(() => reject(new DataQueryError("cancelled", "Query execution was cancelled.")));
-    }
-
-    const deadlineTimer = setTimeout(() => {
-      finish(() => reject(new DataQueryError("deadline", "The execution deadline was reached.")));
-    }, Math.max(0, context.deadline - Date.now()));
-
-    context.signal.addEventListener("abort", onAbort, { once: true });
-    if (context.signal.aborted) {
-      onAbort();
-    }
-
-    // Both handlers remain attached if cancellation wins, so late rejections
-    // are consumed. finish ensures every path removes our timer and listener once.
-    work.then(
-      value => finish(() => resolve(value)),
-      error => finish(() => reject(error)),
-    );
-  });
+    throw error;
+  } finally {
+    scope.dispose();
+  }
 }

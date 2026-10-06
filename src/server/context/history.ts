@@ -1,5 +1,7 @@
 import "server-only";
 import { z } from "zod";
+import { inspectMessageSequence } from "../agent/message-sequence";
+import { transcriptSequence } from "../conversations/transcript";
 import {
   conversationSchema, conversationEventSchema, runSchema, storedEvidenceSchema,
   type ConversationEvent, type ConversationRun,
@@ -68,6 +70,9 @@ function validateRun(
 }
 
 function reconstructRun(run: ConversationRun, events: ConversationEvent[]): HistoryInteraction[] {
+  if (!inspectMessageSequence(transcriptSequence(events)).valid) {
+    invalidHistory();
+  }
   const interactions: HistoryInteraction[] = [];
   const seenCallIds = new Set<string>();
   let pending: HistoryInteraction | undefined;
@@ -212,6 +217,22 @@ export function reconstructHistory(input: ConversationHistory, targetRunId: stri
     record.conversationId !== history.conversation.id || !runs.has(record.runId),
   )) {
     invalidHistory();
+  }
+  for (const event of events) {
+    if (event.payload.kind !== "tool_result") {
+      continue;
+    }
+    const payload = event.payload.result.payload;
+    if (payload.kind === "inline") {
+      continue;
+    }
+    const record = evidence.get(payload.evidenceId);
+    // Missing visible evidence has its own projection error. Unavailable results
+    // still carry a stored reference and must obey the same ownership rules.
+    if ((payload.kind === "evidence_unavailable" && !record)
+      || (record && (record.runId !== event.runId || record.conversationId !== event.conversationId))) {
+      invalidHistory();
+    }
   }
   return { interactions, runs, evidence, terminalOutcomes };
 }

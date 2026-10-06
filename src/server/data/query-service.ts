@@ -12,16 +12,26 @@ import type {
   JsonValue,
   QueryColumn,
   QueryOutcome,
+  QueryErrorCode,
 } from "./types";
 
 const MAX_ROWS = 200;
 const PAGE_SIZE = 25;
 const MAX_PAYLOAD_BYTES = 256 * 1024;
 
+export type QueryPhase = "validation" | "dry_run" | "submission" | "results" | "statistics" | "cleanup";
+export type QueryDiagnostic = {
+  category: QueryErrorCode | "cleanup_failed";
+  phase: QueryPhase;
+  elapsedMs: number;
+  jobId?: string;
+};
+
 type QueryServiceDependencies = {
   gateway: BigQueryGateway;
   maximumBytesBilled: string;
   mapExecutionError?: (error: unknown) => DataQueryError;
+  reportFailure?: (diagnostic: QueryDiagnostic) => void;
 };
 
 type CollectedResult = {
@@ -33,11 +43,6 @@ type CollectedResult = {
 
 function payloadSize(columns: QueryColumn[], rows: Record<string, JsonValue>[]): number {
   return Buffer.byteLength(JSON.stringify({ columns, rows }), "utf8");
-}
-
-function cancelBestEffort(job: DataQueryJob): void {
-  // Cleanup must not replace the original failure. Cancellation is not guaranteed.
-  void job.cancel().catch(() => undefined);
 }
 
 async function collectResults(
@@ -115,6 +120,36 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
     const startedAt = Date.now();
     let job: DataQueryJob | undefined;
     let executionFinished = false;
+    let phase: QueryPhase = "validation";
+
+    function reportFailure(category: QueryDiagnostic["category"], operation: QueryPhase, activeJob = job): void {
+      const identifier = activeJob?.id;
+      const safeJobId = typeof identifier === "string" && /^[a-zA-Z0-9._:/-]{1,200}$/.test(identifier)
+        ? identifier
+        : undefined;
+      try {
+        dependencies.reportFailure?.({
+          category,
+          phase: operation,
+          elapsedMs: Date.now() - startedAt,
+          ...(safeJobId ? { jobId: safeJobId } : {}),
+        });
+      } catch {
+        // Diagnostics cannot change execution or cleanup outcomes.
+      }
+    }
+
+    function cancelBestEffort(activeJob: DataQueryJob): void {
+      // Cancellation may outlive the caller. Its rejection is consumed and
+      // reported without replacing the primary failure or exposing SDK text.
+      try {
+        void activeJob.cancel().catch(() => {
+          reportFailure("cleanup_failed", "cleanup", activeJob);
+        });
+      } catch {
+        reportFailure("cleanup_failed", "cleanup", activeJob);
+      }
+    }
 
     try {
       checkExecution(context);
@@ -132,12 +167,14 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
         throw new DataQueryError("budget_exhausted", "The execution result-byte budget was reached.");
       }
 
+      phase = "dry_run";
       const estimate = await withinDeadline(dependencies.gateway.dryRun(sql), context);
       checkExecution(context);
       if (BigInt(estimate.estimatedBytes) > BigInt(dependencies.maximumBytesBilled)) {
         throw new DataQueryError("processing_limit", "Estimated processing exceeds the query ceiling. Narrow dates or selected fields.");
       }
 
+      phase = "submission";
       const submission = dependencies.gateway.submit(sql, {
         maximumBytesBilled: dependencies.maximumBytesBilled,
         timeoutMs: Math.max(1, context.deadline - Date.now()),
@@ -152,7 +189,9 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
       job = await withinDeadline(submission, context);
       checkExecution(context);
 
+      phase = "results";
       const result = await collectResults(job, context, byteLimit);
+      phase = "statistics";
       const statistics = await withinDeadline(job.statistics(), context);
       checkExecution(context);
 
@@ -182,11 +221,18 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
       if (job) {
         cancelBestEffort(job);
       }
+      // A delayed timer must not turn an expired operation into a provider error.
+      try {
+        checkExecution(context);
+      } catch (stopError) {
+        error = stopError;
+      }
       const failure = error instanceof DataQueryError
         ? error
         : dependencies.mapExecutionError?.(error)
           ?? new DataQueryError("execution_failed", "The analytical query could not complete.");
 
+      reportFailure(failure.code, phase);
       return {
         ok: false,
         error: {

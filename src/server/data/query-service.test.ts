@@ -121,6 +121,53 @@ describe("query service", () => {
     expect(await result).toMatchObject({ ok: false, error: { code: "deadline" } });
     resolve(job); await Promise.resolve(); expect(job.cancel).toHaveBeenCalledOnce();
   });
+  it("classifies provider rejection after an elapsed deadline without waiting for its timer", async () => {
+    vi.useFakeTimers();
+    const { execute, gateway } = fixture();
+    const context = createExecutionContext({ deadline: Date.now() + 20 });
+    vi.mocked(gateway.dryRun).mockImplementation(async () => {
+      vi.setSystemTime(context.deadline);
+      throw new Error("private provider text");
+    });
+    expect(await execute({ sql }, context)).toMatchObject({ ok: false, error: { code: "deadline" } });
+    expect(gateway.submit).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("reports failed cleanup safely when the diagnostic sink throws: %s", async throwingSink => {
+    const { job, gateway } = fixture();
+    const diagnostics: unknown[] = [];
+    vi.mocked(job.readPage).mockRejectedValue(new Error("secret SQL and credentials"));
+    vi.mocked(job.cancel).mockRejectedValue(new Error("secret cleanup text"));
+    const execute = createQueryService({
+      gateway, maximumBytesBilled: "1000",
+      reportFailure(diagnostic) {
+        diagnostics.push(diagnostic);
+        if (throwingSink) {
+          throw new Error("sink failed");
+        }
+      },
+    });
+    const result = await execute({ sql }, createExecutionContext());
+    await Promise.resolve();
+    expect(result).toMatchObject({ ok: false, error: { code: "execution_failed" } });
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "execution_failed", phase: "results", jobId: "test-job" }),
+      expect.objectContaining({ category: "cleanup_failed", phase: "cleanup", jobId: "test-job" }),
+    ]));
+    expect(JSON.stringify(diagnostics)).not.toContain("secret");
+  });
+
+  it("omits unsafe job identifiers from diagnostics", async () => {
+    const { job, gateway } = fixture();
+    job.id = "secret identifier with spaces";
+    vi.mocked(job.statistics).mockRejectedValue(new Error("private metadata"));
+    const reportFailure = vi.fn();
+    const execute = createQueryService({ gateway, maximumBytesBilled: "1000", reportFailure });
+    await execute({ sql }, createExecutionContext());
+    expect(reportFailure).toHaveBeenCalledWith({ category: "execution_failed", phase: "statistics", elapsedMs: expect.any(Number) });
+    expect(JSON.stringify(reportFailure.mock.calls)).not.toContain("secret");
+  });
+
   it("returns sanitized failures without retrying", async () => {
     const { execute, gateway } = fixture(); vi.mocked(gateway.dryRun).mockRejectedValue(new Error("secret credential text"));
     const result = await execute({ sql }, createExecutionContext());

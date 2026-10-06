@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { jsonValueSchema } from "../contracts/json";
 import { assistantMessageSchema, modelMessageSchema, type ModelMessage, type ModelResponse, type RegisteredTool } from "./contracts";
+import { inspectMessageSequence } from "./message-sequence";
 import { AgentRunnerError } from "./runner-contracts";
 
 export const limitsSchema = z.strictObject({
@@ -40,25 +41,9 @@ export function validateInitialMessages(messages: ModelMessage[]): ModelMessage[
   if (!parsed.success) {
     throw new AgentRunnerError("configuration", "The initial model messages are invalid.");
   }
-  const pending = new Set<string>();
-  for (const message of parsed.data) {
-    if (message.role === "tool") {
-      if (!pending.delete(message.callId)) {
-        throw new AgentRunnerError("configuration", "The initial history contains unmatched tool results.");
-      }
-      continue;
-    }
-    if (pending.size > 0) {
-      throw new AgentRunnerError("configuration", "The initial history contains unfinished tool calls.");
-    }
-    if (message.role === "assistant") {
-      for (const call of message.toolCalls) {
-        pending.add(call.callId);
-      }
-    }
-  }
-  if (pending.size > 0) {
-    throw new AgentRunnerError("configuration", "The initial history contains unfinished tool calls.");
+  const sequence = inspectMessageSequence(parsed.data);
+  if (!sequence.valid || sequence.pendingCallIds.size > 0) {
+    throw new AgentRunnerError("configuration", "The initial history contains unmatched or unfinished tool calls.");
   }
   return parsed.data;
 }

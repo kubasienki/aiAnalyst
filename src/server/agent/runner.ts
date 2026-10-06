@@ -1,5 +1,6 @@
 import "server-only";
 import { jsonValueSchema } from "../contracts/json";
+import { ConversationRepositoryError } from "../conversations/repository";
 import { ContextError } from "../context/contracts";
 import { recoverableToolErrorSchema, type FailureRepeatPolicy, type ModelRequest, type RegisteredTool } from "./contracts";
 import { ModelError } from "./errors";
@@ -7,7 +8,7 @@ import { createAgentExecution } from "./execution";
 import { errorContent, resolveAction } from "./actions";
 import { createToolRegistry, limitsSchema, validateInitialMessages, validateResponse } from "./runner-validation";
 import {
-  AgentRunnerError, type AgentCheckpoint, type AgentResult, type AgentRunnerDependencies,
+  AgentRunnerError, type AgentDiagnostic, type AgentCheckpoint, type AgentResult, type AgentRunnerDependencies,
   type AgentRunInput, type AgentStatistics, type RunnerPhase,
 } from "./runner-contracts";
 
@@ -35,6 +36,22 @@ function normalizeFailure(error: unknown): AgentRunnerError {
     return new AgentRunnerError("protocol", "The model context could not be continued safely.");
   }
   return new AgentRunnerError("internal", "The agent attempt could not be completed.");
+}
+
+function diagnosticOrigin(error: unknown): AgentDiagnostic["origin"] {
+  if (error instanceof ModelError) {
+    return { boundary: "model", category: error.code };
+  }
+  if (error instanceof ContextError) {
+    return { boundary: "context", category: error.code };
+  }
+  if (error instanceof AgentRunnerError && error.code === "persistence") {
+    return {
+      boundary: "checkpoint",
+      category: error.cause instanceof ConversationRepositoryError ? error.cause.code : "write_failed",
+    };
+  }
+  return undefined;
 }
 
 export function createAgentRunner(dependencies: AgentRunnerDependencies) {
@@ -90,8 +107,8 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
           // Do not race started writes. A terminal checkpoint is the commit point;
           // the caller returns its outcome even if cancellation arrived mid-write.
           await input.checkpoint(event);
-        } catch {
-          throw new AgentRunnerError("persistence", "The execution checkpoint could not be saved.");
+        } catch (cause) {
+          throw new AgentRunnerError("persistence", "The execution checkpoint could not be saved.", { cause });
         }
       }
 
@@ -200,6 +217,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
       }
       throw new AgentRunnerError("budget_exhausted", "The model-call allowance ended without an accepted terminal action.");
     } catch (error) {
+      const origin = diagnosticOrigin(error);
       // Checkpoint rejection retains its persistence category. Otherwise a stop
       // signal wins a concurrent operation failure, with no further execution.
       if (!(error instanceof AgentRunnerError && error.code === "persistence")) {
@@ -212,7 +230,14 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
       const failure = normalizeFailure(error);
       statistics.elapsedMs = Date.now() - startedAt;
       try {
-        dependencies.reportFailure?.({ category: failure.code, phase, modelRequests: statistics.modelRequests, toolExecutions: statistics.toolExecutions, elapsedMs: statistics.elapsedMs });
+        dependencies.reportFailure?.({
+          category: failure.code,
+          phase,
+          modelRequests: statistics.modelRequests,
+          toolExecutions: statistics.toolExecutions,
+          elapsedMs: statistics.elapsedMs,
+          ...(origin ? { origin } : {}),
+        });
       } catch {
         // Selected diagnostics are best effort and must not mask execution failure.
       }

@@ -202,6 +202,21 @@ describe("context reconstruction and projection", () => {
     expect(JSON.stringify(context.messages)).not.toContain("x".repeat(100));
   });
 
+  it.each(["evidence", "evidence_unavailable"] as const)("rejects %s references to evidence owned by another run", kind => {
+    const f = fixture();
+    const earlier = f.start();
+    const evidence = evidenceInput();
+    f.history.evidence.push({ ...evidence, conversationId: earlier.conversationId, runId: earlier.id, createdAt: 2 });
+    f.finish(earlier, failure);
+    const active = f.start("Follow up");
+    f.append(active, { kind: "assistant_message", message: call("query") });
+    const payload = kind === "evidence"
+      ? { kind, evidenceId: evidence.evidence.resultId }
+      : { kind, evidenceId: evidence.evidence.resultId, content: { error: "unavailable" } };
+    f.append(active, { kind: "tool_result", result: { callId: "query", payload } });
+    expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
+  });
+
   it("fails explicitly when selected evidence is missing", () => {
     const f = fixture();
     const active = f.start();

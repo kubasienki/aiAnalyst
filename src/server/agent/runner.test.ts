@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ContextError } from "../context/contracts";
 import { createOpenRouterRequestMeasurer } from "../adapters/openrouter/request-measurer";
 import { measureContextRequest } from "../context/budget";
+import { ConversationRepositoryError } from "../conversations/repository";
 import { ModelError } from "./errors";
 import type { AgentModel, ModelRequest, ModelResponse, RegisteredTool, ToolExecution, ToolInvocationContext } from "./contracts";
 import type { AgentCheckpoint, AgentRunInput } from "./runner-contracts";
@@ -439,6 +440,26 @@ describe("bounded agent runner", () => {
     f.complete.mockRejectedValue(new ModelError(code, "Safe failure"));
     expect(await f.run(f.input)).toMatchObject({ kind: "failure", error: { code: expected }, statistics: { modelRequests: 1 } });
     expect(f.complete).toHaveBeenCalledOnce();
+  });
+
+  it.each(["truncated", "filtered", "response_limit"] as const)("preserves originating %s diagnostics while keeping the public provider category", async code => {
+    const f = setup();
+    f.complete.mockRejectedValue(new ModelError(code, "private response contents"));
+    expect(await f.run(f.input)).toMatchObject({ kind: "failure", error: { code: "provider" } });
+    expect(f.reportFailure).toHaveBeenCalledWith(expect.objectContaining({
+      category: "provider", phase: "model", origin: { boundary: "model", category: code },
+    }));
+    expect(JSON.stringify(f.reportFailure.mock.calls)).not.toContain("private");
+  });
+
+  it("preserves checkpoint categories without exposing database errors", async () => {
+    const f = setup();
+    f.checkpoint.mockRejectedValue(new ConversationRepositoryError("unavailable", "secret database details"));
+    expect(await f.run(f.input)).toMatchObject({ kind: "failure", error: { code: "persistence" } });
+    expect(f.reportFailure).toHaveBeenCalledWith(expect.objectContaining({
+      category: "persistence", phase: "checkpoint", origin: { boundary: "checkpoint", category: "unavailable" },
+    }));
+    expect(JSON.stringify(f.reportFailure.mock.calls)).not.toContain("secret");
   });
 
   it("rejects invalid limits, registry definitions, and unfinished initial history", async () => {

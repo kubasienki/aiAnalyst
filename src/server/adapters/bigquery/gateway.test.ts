@@ -22,6 +22,40 @@ describe("BigQuery gateway", () => {
     expect(createQueryJob).toHaveBeenLastCalledWith({ query: "SELECT 1", location: "US", useLegacySql: false, maximumBytesBilled: "1000", jobTimeoutMs: 250 });
     expect(await active.statistics()).toEqual({ bytesProcessed: "125", bytesBilled: "200", cacheHit: true });
   });
+  it.each([
+    null,
+    {},
+    { statistics: { query: { totalBytesProcessed: "1", totalBytesBilled: "1" } } },
+    { statistics: { query: { totalBytesProcessed: "invalid", totalBytesBilled: "1", cacheHit: false } } },
+    { statistics: { query: { totalBytesProcessed: "1", totalBytesBilled: -1, cacheHit: false } } },
+    { statistics: { query: { totalBytesProcessed: 9_007_199_254_740_992, totalBytesBilled: "1", cacheHit: false } } },
+    { statistics: { query: { totalBytesProcessed: "1", totalBytesBilled: "1", cacheHit: "false" } } },
+  ])("rejects missing or malformed statistics without fabricating zero values", async metadata => {
+    const { gateway, job } = fixture();
+    job.getMetadata.mockResolvedValue([metadata]);
+    const active = await gateway.submit("SELECT 1", { maximumBytesBilled: "1000", timeoutMs: 250 });
+    await expect(active.statistics()).rejects.toMatchObject({ code: "execution_failed" });
+  });
+
+  it.each([undefined, null, "invalid", -1, 1.5, 9_007_199_254_740_992])("rejects invalid dry-run byte count %s", async totalBytesProcessed => {
+    const { gateway, createQueryJob } = fixture();
+    createQueryJob.mockResolvedValue([{ metadata: { statistics: { totalBytesProcessed } } }]);
+    await expect(gateway.dryRun("SELECT 1")).rejects.toMatchObject({ code: "execution_failed" });
+  });
+
+  it("preserves genuine zero statistics and exact large numeric strings", async () => {
+    const { gateway, job } = fixture();
+    job.getMetadata.mockResolvedValue([{ statistics: { query: {
+      totalBytesProcessed: "9007199254740993", totalBytesBilled: "0", cacheHit: false,
+    } } }]);
+    const active = await gateway.submit("SELECT 1", { maximumBytesBilled: "1000", timeoutMs: 250 });
+    expect(await active.statistics()).toEqual({ bytesProcessed: "9007199254740993", bytesBilled: "0", cacheHit: false });
+    job.getMetadata.mockResolvedValue([{ statistics: { query: {
+      totalBytesProcessed: "0", totalBytesBilled: "0", cacheHit: true,
+    } } }]);
+    expect(await active.statistics()).toEqual({ bytesProcessed: "0", bytesBilled: "0", cacheHit: true });
+  });
+
   it("retains incomplete responses despite the SDK timeout error", async () => {
     const { gateway, job } = fixture();
     job.getQueryResults.mockImplementation((_options, callback) => callback(new Error("timeout"), null, {}, { jobComplete: false }));

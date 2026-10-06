@@ -8,5 +8,10 @@ import { readBigQueryConfig } from "./bigquery";
 export function createDataLayer() {
   const config = readBigQueryConfig();
   const gateway = createBigQueryGateway(createBigQueryClient(config), config);
-  return createQueryService({ gateway, maximumBytesBilled: config.maximumBytesBilled, mapExecutionError: sanitizeBigQueryError });
+  return createQueryService({
+    gateway,
+    maximumBytesBilled: config.maximumBytesBilled,
+    mapExecutionError: sanitizeBigQueryError,
+    reportFailure: diagnostic => console.error("Analytical query failed", diagnostic),
+  });
 }

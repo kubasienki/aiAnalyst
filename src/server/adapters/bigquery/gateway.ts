@@ -1,10 +1,41 @@
 import "server-only";
 
+import { z } from "zod";
 import type { BigQuery, Job } from "@google-cloud/bigquery";
 import type { BigQueryConfig } from "../../config/bigquery";
 import { DataQueryError } from "../../data/errors";
 import type { BigQueryGateway, DataQueryJob, QueryColumn, QueryPage } from "../../data/types";
 import { normalizeRow } from "./normalize";
+
+const byteCountSchema = z.union([
+  z.string().regex(/^\d+$/),
+  z.number().int().nonnegative().safe().transform(value => String(value)),
+]);
+const completedJobStatisticsSchema = z.object({
+  statistics: z.object({
+    totalBytesProcessed: byteCountSchema.optional(),
+    query: z.object({
+      totalBytesProcessed: byteCountSchema.optional(),
+      totalBytesBilled: byteCountSchema,
+      cacheHit: z.boolean(),
+    }),
+  }),
+}).transform(({ statistics }, context) => {
+  const bytesProcessed = statistics.query.totalBytesProcessed ?? statistics.totalBytesProcessed;
+  if (bytesProcessed === undefined) {
+    context.addIssue({ code: "custom", message: "Missing processed byte count." });
+    return z.NEVER;
+  }
+  return {
+    bytesProcessed,
+    bytesBilled: statistics.query.totalBytesBilled,
+    cacheHit: statistics.query.cacheHit,
+  };
+});
+
+const dryRunMetadataSchema = z.object({
+  statistics: z.object({ totalBytesProcessed: byteCountSchema }),
+});
 
 type SchemaField = {
   name?: string;
@@ -74,11 +105,11 @@ export function createBigQueryGateway(client: BigQuery, config: BigQueryConfig):
   return {
     async dryRun(sql) {
       const [job] = await client.createQueryJob({ ...queryDefaults, query: sql, dryRun: true });
-      const estimatedBytes = job.metadata.statistics?.totalBytesProcessed;
-      if (estimatedBytes === undefined) {
-        throw new Error("Missing processing estimate.");
+      const parsed = dryRunMetadataSchema.safeParse(job.metadata);
+      if (!parsed.success) {
+        throw new DataQueryError("execution_failed", "BigQuery returned invalid processing metadata.");
       }
-      return { estimatedBytes: String(estimatedBytes) };
+      return { estimatedBytes: parsed.data.statistics.totalBytesProcessed };
     },
 
     async submit(sql, options) {
@@ -97,12 +128,11 @@ export function createBigQueryGateway(client: BigQuery, config: BigQueryConfig):
         readPage: pageOptions => readResultPage(job, pageOptions),
         async statistics() {
           const [metadata] = await job.getMetadata();
-          const queryStatistics = metadata.statistics?.query;
-          return {
-            bytesProcessed: String(queryStatistics?.totalBytesProcessed ?? metadata.statistics?.totalBytesProcessed ?? "0"),
-            bytesBilled: String(queryStatistics?.totalBytesBilled ?? "0"),
-            cacheHit: queryStatistics?.cacheHit ?? false,
-          };
+          const parsed = completedJobStatisticsSchema.safeParse(metadata);
+          if (!parsed.success) {
+            throw new DataQueryError("execution_failed", "BigQuery returned invalid query statistics.");
+          }
+          return parsed.data;
         },
         async cancel() {
           await job.cancel();

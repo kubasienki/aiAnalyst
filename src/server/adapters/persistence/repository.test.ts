@@ -68,6 +68,42 @@ afterEach(() => {
 });
 
 describe("SQLite conversation repository", () => {
+  it("rejects intervening assistant messages and notes atomically until every batch result is saved", async () => {
+    const { repository } = fixture();
+    const { conversation, run } = await start(repository);
+    await repository.appendAssistant(run.id, {
+      role: "assistant", content: null,
+      toolCalls: [...call("first").toolCalls, ...call("second").toolCalls],
+    });
+    const before = await repository.loadHistory(conversation.id);
+    await expect(repository.appendAssistant(run.id, call("third"))).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.appendContextNote(run.id, "Do something else")).rejects.toMatchObject({ code: "conflict" });
+    expect(await repository.loadHistory(conversation.id)).toEqual(before);
+    await repository.recordToolResult(run.id, acknowledgment("second"));
+    await expect(repository.appendAssistant(run.id, call("third"))).rejects.toMatchObject({ code: "conflict" });
+    await repository.recordToolResult(run.id, acknowledgment("first"));
+    await repository.appendContextNote(run.id, "The batch is complete.");
+    await repository.appendAssistant(run.id, call("third"));
+    await repository.finishRun(run.id, { outcome: failure });
+    expect((await repository.loadHistory(conversation.id)).runs[0].status).toBe("failed");
+  });
+
+  it("reads a committed snapshot while another connection holds the write reservation", async () => {
+    const { repository, databasePath } = fixture();
+    const { conversation } = await start(repository);
+    const observer = new Database(databasePath);
+    observers.push(observer);
+    observer.exec("BEGIN IMMEDIATE");
+    try {
+      observer.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(1_500, conversation.id);
+      const history = await repository.loadHistory(conversation.id);
+      expect(history.conversation.updatedAt).toBe(1_000);
+      expect(history.events).toHaveLength(1);
+    } finally {
+      observer.exec("ROLLBACK");
+    }
+  });
+
   it("reopens a full query/answer exchange without changing evidence or event order", async () => {
     const { repository, open } = fixture();
     const { conversation, run } = await start(repository);

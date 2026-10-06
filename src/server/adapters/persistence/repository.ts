@@ -7,6 +7,8 @@ import { and, asc, eq, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { assistantMessageSchema, type ToolCall } from "../../agent/contracts";
+import { inspectMessageSequence, type MessageSequenceEntry } from "../../agent/message-sequence";
+import { transcriptSequence } from "../../conversations/transcript";
 import { jsonValueSchema, type JsonValue } from "../../contracts/json";
 import {
   conversationEventSchema, conversationSchema, evidenceInputSchema, eventPayloadSchema,
@@ -92,6 +94,8 @@ export function openConversationRepository(options: Options): ConversationReposi
   try {
     connection.pragma("foreign_keys = ON");
     connection.pragma("journal_mode = WAL");
+    // better-sqlite3 waits synchronously under contention; this bounds lock
+    // waiting, not total operation duration, and can block the Node event loop.
     connection.pragma("busy_timeout = 5000");
     connection.transaction(() => connection.exec(INITIALIZE_SCHEMA)).immediate();
     // Selecting every declared column also catches incompatible older table shapes.
@@ -177,6 +181,13 @@ export function openConversationRepository(options: Options): ConversationReposi
       .all().map(readEvent);
   }
 
+  function validateAppend(runId: string, next: MessageSequenceEntry): void {
+    const sequence = inspectMessageSequence([...transcriptSequence(runEvents(runId)), next]);
+    if (!sequence.valid) {
+      conflict("The event does not follow the pending tool-call sequence.");
+    }
+  }
+
   function appendEvent(run: ConversationRun, payload: EventPayload, timestamp: number): ConversationEvent {
     const latest = db.select({ sequence: sql<number>`coalesce(max(${events.sequence}), 0)` })
       .from(events).where(eq(events.conversationId, run.conversationId)).get();
@@ -231,6 +242,7 @@ export function openConversationRepository(options: Options): ConversationReposi
 
   function recordResult(run: ConversationRun, result: StoredToolResult, evidence: EvidenceInput | undefined, timestamp: number) {
     findCall(run.id, result.callId);
+    validateAppend(run.id, { role: "tool", callId: result.callId });
     const duplicate = runEvents(run.id).some(event =>
       event.payload.kind === "tool_result" && event.payload.result.callId === result.callId,
     );
@@ -418,6 +430,7 @@ export function openConversationRepository(options: Options): ConversationReposi
       return perform(() => transaction(() => {
         const run = requireActiveRun(identitySchema.parse(runId));
         const payload = eventPayloadSchema.parse({ kind: "context_note", content });
+        validateAppend(run.id, { role: "system" });
         return appendEvent(run, payload, now());
       }));
     },
@@ -425,6 +438,7 @@ export function openConversationRepository(options: Options): ConversationReposi
       return perform(() => transaction(() => {
         const run = requireActiveRun(identitySchema.parse(runId));
         const parsed = assistantMessageSchema.parse(message);
+        validateAppend(run.id, parsed);
         const existingIds = new Set(runEvents(runId).flatMap(event =>
           event.payload.kind === "assistant_message" ? event.payload.message.toolCalls.map(call => call.callId) : [],
         ));
@@ -446,7 +460,9 @@ export function openConversationRepository(options: Options): ConversationReposi
       return perform(() => transaction(() => finalize(identitySchema.parse(runId), finishRunSchema.parse(input), now())));
     },
     loadHistory(conversationId) {
-      return perform(() => transaction(() => {
+      // One WAL read snapshot keeps the tables consistent without reserving the
+      // writer lock. Write operations still use BEGIN IMMEDIATE above.
+      return perform(() => connection.transaction(() => {
         identitySchema.parse(conversationId);
         const conversation = getConversation(conversationId);
         return {
@@ -464,7 +480,7 @@ export function openConversationRepository(options: Options): ConversationReposi
             .orderBy(asc(queryEvidence.createdAt), asc(queryEvidence.id))
             .all().map(readEvidence),
         };
-      }));
+      }).deferred());
     },
     getEvidence(conversationId, evidenceId) {
       return perform(() => {
