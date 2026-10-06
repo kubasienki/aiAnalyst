@@ -7,5 +7,6 @@ export function createBigQueryClient(config: BigQueryConfig): BigQuery {
   return new BigQuery({
     projectId: config.projectId,
     location: config.location,
+    autoRetry: false,
   });
 }

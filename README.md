@@ -20,10 +20,12 @@ This is a UI preview: the analysis API is not connected and responses explicitly
 - `npm run dev`: start the development server.
 - `npm run lint`: run ESLint.
 - `npm run typecheck`: check TypeScript types.
+- `npm test`: run deterministic data-layer tests with fake BigQuery dependencies.
 - `npm run build`: create a production build.
 - `npm start`: serve a production build.
 - `npm run bigquery:check`: dry-run a fixed one-day GA4 query to check access.
 - `npm run bigquery:check -- --execute`: run that query and display its aggregate.
+- `npm run bigquery:verify`: opt-in live reference checks through the guarded query service.
 
 ## BigQuery setup
 
@@ -55,6 +57,24 @@ ADC login is distinct from `gcloud auth login`: the SDK needs application creden
 
 Common setup errors: missing credentials require ADC login; a disabled API must be enabled in the query project; access denied requires checking query-job permissions and the configured project; location errors require `US` for this sample.
 
+## Data layer
+
+`createDataLayer()` composes the SQL policy, query service, and BigQuery adapter. Call the returned function with `{ sql }` and an execution context created by `createExecutionContext()`. Reuse that context across an investigation: it carries cancellation, an absolute two-minute deadline, four query attempts, and a shared 1 MiB result budget. Rejected and repaired queries consume attempts. There are no automatic application retries.
+
+The service validates SQL, dry-runs it, checks the configured processing ceiling, executes it, retrieves bounded pages, and returns an `ok` result or a typed failure. Successful evidence contains executed SQL, a stable result ID, columns/rows, job statistics, truncation, duration, and the semantic-guide version. It is ready for later conversation persistence; this milestone does not store it.
+
+Supported SQL includes a single GoogleSQL `SELECT`, nonrecursive CTEs, subqueries, joins, item/parameter `UNNEST`, aggregates, grouping, ordering, and supported set-operation branches. Only fully qualified sample event tables are permitted. Each wildcard scan needs literal `_TABLE_SUFFIX` equality, `BETWEEN`, or paired inclusive bounds in its own query scope. Required bounds cannot be hidden beneath `OR` or `NOT`. When other table/derived sources share a scope, qualify the suffix with that wildcard source's unique alias. Dates must be real calendar dates within November 2020–January 2021.
+
+Use explicit projections: `COUNT(*)` is permitted, but `SELECT *` and `alias.*` are rejected. Functions use an explicit allowlist in `sql-policy.ts`; unknown functions, qualified routines, window functions, recursive queries, decorators, scripts, writes, and exports are outside the initial subset. Parse errors fail closed. The executed SQL is the validated original, not a rewritten statement.
+
+Results contain at most 200 rows and 256 KiB of UTF-8 JSON for columns/rows per query. One additional row detects row truncation; pagination is explicit. An individually oversized row fails with `result_size`. Byte omissions are disclosed separately from row omissions. These limits do not reduce warehouse scan cost. Exact decimals and unsafe-sized integers are strings; temporal values are strings, nested arrays/records remain JSON, and null values remain null.
+
+Cancellation stops application polling and requests best-effort job cancellation, including a job created after submission outlives the caller's deadline. The SDK request itself may remain pending; cancellation is not a guarantee that Google stopped processing.
+
+The semantic guide supplies metric definitions and aggregation cautions; it does not mechanically enforce calculations. Purchase events are not deduplicated orders. Event and item revenue differ in the obfuscated sample. Session conversion, acquisition interpretation, and ordered funnels require further verification.
+
+Run `npm run bigquery:verify` after configuring credentials. It executes four reference queries and three independently structured cross-checks through the same service, verifying December revenue, device totals, users, and January product results. It uses BigQuery and is deliberately separate from `npm test`. Default caching is enabled; this command is a correctness check, not a performance benchmark.
+
 ## Structure
 
 ```text
@@ -64,13 +84,13 @@ src/
   server/
     analysis/          Future conversational analysis orchestration
     agent/             Future domain-independent agent runner
-    data/              Future query service, SQL policies, and dataset guide
-    adapters/          BigQuery client factory; future LLM integration
-    config/            Validated BigQuery configuration; future dependency wiring
+    data/              Query service, SQL policy, semantic guide, execution context
+    adapters/          BigQuery client, job gateway, and result normalization
+    config/            Validated configuration and data-layer composition
   shared/              Future browser-safe contracts and validation schemas
-scripts/               Fixed BigQuery connection check
+scripts/               BigQuery connection and live data-layer checks
 ```
 
 `ChatApp` composes presentation components. `useChat` owns conversation updates, while `storage.ts` owns browser persistence and validates restored messages. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
 
-The BigQuery factory and configuration are server-only. The connection script uses the React server condition to import them outside Next.js. They are initialized only when requested, so the UI builds without Google credentials. General query execution, SQL validation, API endpoints, agent execution, charts, and streamed progress are not implemented yet. The next integration replaces the preview reply in `useChat` with a chat transport without coupling presentation components to server services.
+The query-service, BigQuery, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded only when the data layer is created, so the UI builds without Google credentials. Chat APIs, agent execution, conversation persistence, charts, and streamed progress are not implemented yet.

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "bigquery:check": "tsx --conditions=react-server scripts/check-bigquery.ts"
+    "bigquery:check": "tsx --conditions=react-server scripts/check-bigquery.ts",
+    "test": "vitest run",
+    "bigquery:verify": "tsx --conditions=react-server scripts/verify-data-layer.ts"
   },
   "engines": {
     "node": ">=22"
@@ -17,6 +19,7 @@
     "@google-cloud/bigquery": "9.1.0",
     "@next/env": "16.3.8",
     "next": "16.3.8",
+    "node-sql-parser": "5.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "0.0.1"
@@ -28,6 +31,7 @@
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.8",
     "tsx": "4.23.15",
-    "typescript": "6.0.2"
+    "typescript": "6.0.2",
+    "vitest": "5.0.3"
   }
 }
