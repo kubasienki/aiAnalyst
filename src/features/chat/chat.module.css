@@ -1,0 +1,249 @@
+.shell {
+  max-width: 860px;
+  min-height: 100dvh;
+  margin: auto;
+  padding: 32px 24px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.header h1 {
+  font-size: 22px;
+  margin: 6px 0 0;
+  letter-spacing: -0.5px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  color: #596477;
+  margin: 0;
+}
+
+.secondaryButton {
+  background: white;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.notice {
+  margin: 24px 0 0;
+  font-size: 12px;
+  color: #596477;
+  line-height: 1.6;
+}
+
+.conversation {
+  flex: 1;
+  padding: 32px 0;
+}
+
+.welcome {
+  padding: 36px 0;
+  max-width: 620px;
+  margin: auto;
+}
+
+.welcome h2 {
+  margin: 12px 0;
+  font-size: 32px;
+  letter-spacing: -1px;
+}
+
+.welcome > p {
+  line-height: 1.6;
+}
+
+.dataset {
+  color: #596477;
+  font-size: 14px;
+}
+
+.examples {
+  display: grid;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.exampleButton {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  text-align: left;
+  background: white;
+  color: #202b3c;
+  border: 1px solid #d9dee7;
+  border-radius: 10px;
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.exampleButton:hover, .secondaryButton:hover:not(:disabled) {
+  background: #edf0f7;
+}
+
+.exampleButton span {
+  color: #596477;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.message {
+  border-radius: 12px;
+  padding: 16px 20px;
+  max-width: 90%;
+}
+
+.userMessage {
+  align-self: flex-end;
+  background: #e9edfa;
+}
+
+.assistantMessage {
+  align-self: flex-start;
+  background: white;
+  border: 1px solid #e2e6ed;
+}
+
+.messageAuthor {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: #596477;
+}
+
+.messageContent {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  padding-top: 12px;
+}
+
+.composer {
+  border: 1px solid #d9dee7;
+  border-radius: 12px;
+  background: white;
+  padding: 16px;
+}
+
+.inputLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  max-height: 240px;
+  resize: vertical;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px;
+  color: #202b3c;
+  line-height: 1.5;
+  background: white;
+}
+
+.composer textarea::placeholder {
+  color: #737e90;
+}
+
+.composerActions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.composerActions span {
+  color: #737e90;
+  font-size: 11px;
+}
+
+.primaryButton {
+  background: #394c9c;
+  color: white;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: #2a3b82;
+}
+
+.caption {
+  color: #737e90;
+  font-size: 11px;
+  text-align: center;
+  margin: 12px 0 0;
+}
+
+.storageError {
+  color: #8b4912;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 540px) {
+  .shell {
+    padding: 24px 16px 16px;
+  }
+
+  .header h1 {
+    font-size: 19px;
+  }
+
+  .secondaryButton {
+    padding: 9px 10px;
+  }
+
+  .welcome {
+    padding: 12px 0;
+  }
+
+  .welcome h2 {
+    font-size: 28px;
+  }
+
+  .message {
+    max-width: 96%;
+    padding: 14px 16px;
+  }
+
+  .composerActions {
+    align-items: flex-end;
+  }
+
+  .composerActions span {
+    max-width: 140px;
+    line-height: 1.5;
+  }
+
+}

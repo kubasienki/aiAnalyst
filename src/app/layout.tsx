@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "HockeyStack Analyst",
-  description: "Conversational ecommerce analytics project scaffold.",
+  description: "Explore ecommerce performance through a simple conversation.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

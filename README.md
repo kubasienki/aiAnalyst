@@ -1,6 +1,6 @@
 # HockeyStack Analyst
 
-Initial Next.js App Router and TypeScript scaffold. Application behavior is not implemented yet.
+Next.js App Router and TypeScript application with an initial chat UI.
 
 ## Local development
 
@@ -11,9 +11,9 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. The home page displays a static placeholder.
+Open http://localhost:3000. Try an example question or type a message. Enter sends; Shift + Enter adds a line. New conversation clears history and the draft.
 
-No API keys or Google credentials are needed for the scaffold.
+This is a UI preview: the analysis API is not connected and responses explicitly say so. No API keys or Google credentials are needed. The latest 20 message pairs are saved in this browser; storage failures leave the conversation usable in memory.
 
 ## Commands
 
@@ -28,7 +28,7 @@ No API keys or Google credentials are needed for the scaffold.
 ```text
 src/
   app/                 Page shell, layout, styles; future HTTP route handlers
-  features/chat/       Static client component; future chat UI and browser state
+  features/chat/       Chat components, useChat state hook, browser storage
   server/
     analysis/          Future conversational analysis orchestration
     agent/             Future domain-independent agent runner
@@ -38,5 +38,6 @@ src/
   shared/              Future browser-safe contracts and validation schemas
 ```
 
-Empty directories contain `.gitkeep` placeholders. Services, API endpoints, agent execution, queries, and persistence are not implemented.
+`ChatApp` composes presentation components. `useChat` owns conversation updates, while `storage.ts` owns browser persistence and validates restored messages. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
 
+Empty server directories contain `.gitkeep` placeholders. Services, API endpoints, agent execution, queries, charts, and streamed progress are not implemented yet. The next integration replaces the preview reply in `useChat` with a chat transport without coupling presentation components to server services.
