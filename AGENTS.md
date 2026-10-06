@@ -17,10 +17,13 @@ not the fewest lines or the most abstractions.
 
 ## Architecture and types
 
+- Think about bounded contexts in code
+- Keep architecture thoughtful and based in the good practices
 - Keep UI rendering, application workflows, and external integrations separate.
 - Pass dependencies explicitly. Function factories and classes are both valid;
   use whichever expresses the responsibility most clearly.
 - Introduce interfaces and abstractions for real boundaries, not every helper.
+- Use clean separation of concerns 
 - Validate external input at runtime. TypeScript annotations do not validate data.
 - Avoid `any` and unchecked assertions. Narrow `unknown` near the input boundary.
 - Prefer named types when an inline type becomes difficult to read or is reused.
