@@ -1,4 +1,5 @@
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type { JsonValue } from "../contracts/json";
+import type { JsonValue } from "../contracts/json";
 
 export type QueryColumn = {
   name: string;

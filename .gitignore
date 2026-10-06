@@ -9,3 +9,8 @@ next-env.d.ts
 *.log
 .DS_Store
 private-files/
+.data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal

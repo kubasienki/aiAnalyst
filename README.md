@@ -65,7 +65,7 @@ Common setup errors: missing credentials require ADC login; a disabled API must 
 
 `createDataLayer()` composes the SQL policy, query service, and BigQuery adapter. Call the returned function with `{ sql }` and an execution context created by `createExecutionContext()`. Reuse that context across an investigation: it carries cancellation, an absolute two-minute deadline, four query attempts, and a shared 1 MiB result budget. Rejected and repaired queries consume attempts. There are no automatic application retries.
 
-The service validates SQL, dry-runs it, checks the configured processing ceiling, executes it, retrieves bounded pages, and returns an `ok` result or a typed failure. Successful evidence contains executed SQL, a stable result ID, columns/rows, job statistics, truncation, duration, and the semantic-guide version. It is ready for later conversation persistence; this milestone does not store it.
+The service validates SQL, dry-runs it, checks the configured processing ceiling, executes it, retrieves bounded pages, and returns an `ok` result or a typed failure. Successful evidence contains executed SQL, a stable result ID, columns/rows, job statistics, truncation, duration, and the semantic-guide version. The query service does not persist it itself; the separate conversation repository can store it when execution is connected.
 
 Supported SQL includes a single GoogleSQL `SELECT`, nonrecursive CTEs, subqueries, joins, item/parameter `UNNEST`, aggregates, grouping, ordering, and supported set-operation branches. Only fully qualified sample event tables are permitted. Each wildcard scan needs literal `_TABLE_SUFFIX` equality, `BETWEEN`, or paired inclusive bounds in its own query scope. Required bounds cannot be hidden beneath `OR` or `NOT`. When other table/derived sources share a scope, qualify the suffix with that wildcard source's unique alias. Dates must be real calendar dates within November 2020–January 2021.
 
@@ -87,10 +87,12 @@ src/
   features/chat/       Chat components, useChat state hook, browser storage
   server/
     chat/              Single-turn chat service and model boundary
-    analysis/          Future conversational analysis orchestration
-    agent/             Future domain-independent agent runner
+    analysis/          Analyst tool argument schemas and outcomes
+    agent/             Model messages and tool execution contracts; runner deferred
+    conversations/     Conversation/run/event contracts and repository interface
+    contracts/         Shared server JSON value contract
     data/              Query service, SQL policy, semantic guide, execution context
-    adapters/          OpenRouter HTTP adapter; BigQuery client and job gateway
+    adapters/          OpenRouter, BigQuery, and SQLite persistence adapters
     config/            Server configuration and dependency composition
   shared/              Browser-safe chat contracts and input validation
 scripts/               BigQuery connection and live data-layer checks
@@ -100,4 +102,18 @@ scripts/               BigQuery connection and live data-layer checks
 
 The chat service owns the server prompt and depends on a `ChatModel` interface. Its OpenRouter adapter owns HTTP requests, response validation, timeouts, and provider error mapping. Failures log only selected server diagnostics: category, configured model, HTTP status, a validated request ID when available, and numeric completion error codes. Raw bodies, credentials, and conversation contents are not logged. `config/chat.ts` constructs them; the route validates browser input and maps application errors to HTTP responses. This keeps the provider separate from the later analysis workflow.
 
-The query-service, chat, adapters, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded on demand, so builds need no credentials. Agent execution, durable server conversation persistence, charts, and streaming are not implemented yet.
+The query-service, chat, adapters, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded on demand, so builds need no credentials. Agent execution, conversation endpoints, charts, and streaming are not implemented yet.
+
+## Conversation persistence foundation
+
+The persistence repository is implemented separately from the current browser-only chat. It can store conversations, execution attempts, ordered assistant/tool events, and query evidence, but the chat endpoint does not call it yet. The new agent contracts do not change the existing text-only OpenRouter integration.
+
+`createConversationRepository()` in `server/config/persistence.ts` explicitly opens a repository using `SQLITE_DATABASE_PATH` (default `.data/hockeystack.sqlite`). Importing modules does not open a connection. Call `close()` when its owning application or script finishes. Tests use temporary on-disk databases and verify closing/reopening without losing history.
+
+SQLite uses Drizzle and better-sqlite3 with foreign keys, WAL, and a five-second busy timeout. Tables and indexes are initialized with `CREATE ... IF NOT EXISTS`; there are no versioned migrations or automatic upgrades. An incompatible development database requires an explicit manual reset after closing connections. Initialization never deletes existing conversations. Keep database files, WAL/SHM files, and journals out of Git, including when configuring a custom path.
+
+Repository operations atomically begin submissions, enforce one active run per conversation, record tool results with referenced evidence, and finalize outcomes. Reusing a client submission ID returns its original run only when input matches. Explicit retries link to a failed/cancelled/interrupted run and reuse the original user-message event. Terminal-tool acknowledgments and outcomes are saved together; unfinished calls remain in failed/interrupted history for later context handling. Expiry reconciliation is explicit and never resumes tool execution.
+
+Stored JSON is validated at write/read boundaries. Query rows are stored once in evidence records, preserving numeric strings, nulls, and truncation metadata; events contain references rather than copies. Scope and assumptions attached to evidence are analyst declarations, not proof that SQL implements those definitions. The future context builder will reconstruct valid model messages and decide which evidence fits; context compaction and charts are deferred.
+
+The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The current text-only OpenRouter adapter does not capture or replay it yet; adapter integration will map OpenRouter's `reasoning_details` field and enforce overall response/context budgets without truncating required blocks. Display projection and adapter integration must exclude reasoning from browser responses and logs.
