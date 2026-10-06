@@ -1,12 +1,16 @@
 import "server-only";
 import { createOpenRouterChatModel } from "../adapters/openrouter/chat-model";
 import { ChatError, createChatService } from "../chat/chat-service";
+import { ModelError } from "../agent/errors";
+import { readOpenRouterConfig } from "./openrouter";
 
 export function createChat() {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  const model = process.env.OPENROUTER_MODEL?.trim();
-  if (!apiKey || !model) {
-    throw new ChatError("configuration", "Chat is not configured. Set OPENROUTER_API_KEY and OPENROUTER_MODEL on the server.");
+  try {
+    return createChatService(createOpenRouterChatModel(readOpenRouterConfig()));
+  } catch (error) {
+    if (error instanceof ModelError) {
+      throw new ChatError("configuration", error.message);
+    }
+    throw error;
   }
-  return createChatService(createOpenRouterChatModel({ apiKey, model }));
 }

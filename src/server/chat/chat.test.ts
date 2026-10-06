@@ -87,7 +87,7 @@ describe("OpenRouter adapter", () => {
       choices: [{ finish_reason: "stop", message: { content: "Partial reply" }, error: { code: 503, message: "secret detail" } }],
     }));
     await expect(createOpenRouterChatModel(config, fetcher, reportFailure).complete([], new AbortController().signal)).rejects.toMatchObject({ code: "provider" });
-    expect(reportFailure).toHaveBeenCalledWith({ category: "completion_error", model: "test/model", status: 200, requestId: undefined, providerCode: 503 });
+    expect(reportFailure).toHaveBeenCalledWith(expect.objectContaining({ category: "completion_error", model: "test/model", status: 200, requestId: undefined, providerCode: 503 }));
     expect(JSON.stringify(reportFailure.mock.calls)).not.toContain("secret detail");
   });
 
@@ -95,7 +95,7 @@ describe("OpenRouter adapter", () => {
     const reportFailure = vi.fn();
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response("secret body", { status: 429, headers: { "x-request-id": "request-123" } }));
     await expect(createOpenRouterChatModel(config, fetcher, reportFailure).complete([{ role: "user", content: "secret prompt" }], new AbortController().signal)).rejects.toMatchObject({ code: "provider" });
-    expect(reportFailure).toHaveBeenCalledExactlyOnceWith({ category: "http", model: "test/model", status: 429, requestId: "request-123" });
+    expect(reportFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ category: "http", model: "test/model", status: 429, requestId: "request-123" }));
     const logged = JSON.stringify(reportFailure.mock.calls);
     expect(logged).not.toContain("test-key");
     expect(logged).not.toContain("secret");

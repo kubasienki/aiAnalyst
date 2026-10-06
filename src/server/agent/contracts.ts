@@ -12,6 +12,7 @@ export const toolCallSchema = z.strictObject({
 export const providerReplaySchema = z.strictObject({
   origin: z.strictObject({
     model: z.string().min(1),
+    requestedModel: z.string().min(1).optional(),
     provider: z.string().min(1).optional(),
     endpoint: z.string().min(1).optional(),
   }),
@@ -74,14 +75,16 @@ export type ModelRequest = {
   tools: ToolDescription[];
   toolSelection: ToolSelection;
   maxOutputTokens: number;
+  // Absolute run deadline in milliseconds since the Unix epoch.
+  deadline: number;
   signal: AbortSignal;
 };
 
 export type ModelResponse = {
   message: AssistantMessage;
-  finishReason: "stop" | "tool_calls" | "length" | "content_filter";
+  finishReason: "stop" | "tool_calls";
   requestId?: string;
-  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number };
+  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; reasoningTokens?: number };
 };
 
 export interface AgentModel {

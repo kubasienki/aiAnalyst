@@ -30,6 +30,7 @@ The latest 40 messages are saved in this browser; storage failures leave the con
 - `npm run bigquery:check`: dry-run a fixed one-day GA4 query to check access.
 - `npm run bigquery:check -- --execute`: run that query and display its aggregate.
 - `npm run bigquery:verify`: opt-in live reference checks through the guarded query service.
+- `npm run openrouter:check`: opt-in live tool call and continuation with a fixed local result (two billable model requests; no BigQuery access).
 
 ## BigQuery setup
 
@@ -95,7 +96,7 @@ src/
     adapters/          OpenRouter, BigQuery, and SQLite persistence adapters
     config/            Server configuration and dependency composition
   shared/              Browser-safe chat contracts and input validation
-scripts/               BigQuery connection and live data-layer checks
+scripts/               BigQuery and OpenRouter live connection checks
 ```
 
 `ChatApp` composes presentation components. `useChat` owns conversation updates, while `storage.ts` owns browser persistence and validates restored messages. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
@@ -106,7 +107,7 @@ The query-service, chat, adapters, and configuration entrypoints are server-only
 
 ## Conversation persistence foundation
 
-The persistence repository is implemented separately from the current browser-only chat. It can store conversations, execution attempts, ordered assistant/tool events, and query evidence, but the chat endpoint does not call it yet. The new agent contracts do not change the existing text-only OpenRouter integration.
+The persistence repository is implemented separately from the current browser-only chat. It can store conversations, execution attempts, ordered assistant/tool events, and query evidence, but the chat endpoint does not call it yet. The existing chat endpoint still uses the text-only adapter; the tool-capable adapter is available separately for the future runner.
 
 `createConversationRepository()` in `server/config/persistence.ts` explicitly opens a repository using `SQLITE_DATABASE_PATH` (default `.data/hockeystack.sqlite`). Importing modules does not open a connection. Call `close()` when its owning application or script finishes. Tests use temporary on-disk databases and verify closing/reopening without losing history.
 
@@ -116,4 +117,16 @@ Repository operations atomically begin submissions, enforce one active run per c
 
 Stored JSON is validated at write/read boundaries. Query rows are stored once in evidence records, preserving numeric strings, nulls, and truncation metadata; events contain references rather than copies. Scope and assumptions attached to evidence are analyst declarations, not proof that SQL implements those definitions. The future context builder will reconstruct valid model messages and decide which evidence fits; context compaction and charts are deferred.
 
-The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The current text-only OpenRouter adapter does not capture or replay it yet; adapter integration will map OpenRouter's `reasoning_details` field and enforce overall response/context budgets without truncating required blocks. Display projection and adapter integration must exclude reasoning from browser responses and logs.
+The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The tool-capable OpenRouter adapter captures and replays it, mapping `reasoning_details` without truncating blocks. Basic chat still returns text only. The future runner and display projection must keep reasoning out of browser responses and logs.
+
+## Tool-capable model boundary
+
+`createAgentModel()` in `server/config/agent-model.ts` constructs an `AgentModel` on demand. Each `complete()` call sends one raw HTTP request. The caller supplies model messages, tool descriptions, required/none/specific tool selection, an output-token ceiling, an abort signal, and an absolute run deadline in Unix milliseconds. The adapter neither executes tools nor reads conversation storage. It is ready for the next runner stage; `/api/chat` does not use it yet.
+
+`protocol.ts` owns OpenRouter message mapping and runtime validation. It checks that all assistant tool calls have exactly one matching result before continuation, sends tool definitions on every request, and serializes tool results as JSON strings. Tool-call argument strings remain unchanged, including malformed JSON; unknown tool names and valid unexpected batches are returned for the runner to handle. Invalid envelopes, incomplete replies, filtered replies, and recognized context overflow produce typed `ModelError` failures. A normal text response remains representable even when tools were required, so the runner can provide bounded corrective feedback.
+
+Reasoning capture records both requested and resolved model identity. Continuations prefer nonempty structured reasoning blocks over duplicate plaintext; stored fields remain available unchanged. Continuations pin the resolved model instead of reusing a router alias. Cross-model replay, conflicting resolved models, and conflicting provider origins fail before HTTP. When a provider identity is available, replay restricts routing to that provider and disables fallback. When it is absent, identical endpoint routing cannot be guaranteed. Choosing which older reasoning to replay belongs to the future context builder; this adapter does not compact history.
+
+The shared transport caps each request at 60 seconds or the remaining run deadline, whichever is shorter, including response-body reading. Explicit clock checks after receiving headers, reading the body, and normalizing the response enforce these budgets even when the event loop delays abort timers. Cancellation stops waiting and disposes response streams, including responses arriving late from a custom transport. `OPENROUTER_MAX_RESPONSE_BYTES` limits the complete UTF-8 response body, including reasoning (default 2 MiB). Oversized bodies fail rather than being truncated. There are no automatic retries. Agent routing requires tool parameters to be supported and disables parallel tool calls. Usage exposes reported input, output, cached-input, and reasoning tokens when available; this does not guarantee a cache hit. Failure diagnostics include elapsed milliseconds and deliberately exclude prompts, arguments, reasoning, raw errors, and bodies.
+
+Run `npm run openrouter:check` with server credentials to verify a harmless tool request and continuation against the configured model. The script validates the requested call, supplies `{ "ok": true }` locally, replays returned reasoning, and requests a final text response. It prints only safe request IDs, usage, and whether reasoning was captured. This verifies model protocol compatibility, not analytical correctness or the future agent loop.

@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "bigquery:check": "tsx --conditions=react-server scripts/check-bigquery.ts",
     "test": "vitest run",
-    "bigquery:verify": "tsx --conditions=react-server scripts/verify-data-layer.ts"
+    "bigquery:verify": "tsx --conditions=react-server scripts/verify-data-layer.ts",
+    "openrouter:check": "tsx --conditions=react-server scripts/check-openrouter.ts"
   },
   "engines": {
     "node": ">=22"
