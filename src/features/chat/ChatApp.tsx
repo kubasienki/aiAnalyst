@@ -8,7 +8,7 @@ import { useChat } from "./useChat";
 import styles from "./chat.module.css";
 
 export function ChatApp() {
-  const { messages, ready, storageError, conversationKey, sendMessage, resetConversation } = useChat();
+  const { messages, ready, storageError, pending, chatError, conversationKey, sendMessage, retryMessage, resetConversation } = useChat();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,18 +27,23 @@ export function ChatApp() {
         </button>
       </header>
 
-      <p className={styles.notice}>UI preview · Analysis is not connected yet. History stays in this browser.</p>
+      <p className={styles.notice}>AI chat · Data querying is not connected yet. Recent history is sent to the AI provider and saved in this browser.</p>
 
       <section className={styles.conversation} aria-label="Conversation">
         {!ready ? <p role="status">Loading conversation…</p> : messages.length ? (
           <ChatMessages messages={messages} />
         ) : <ChatWelcome onSelect={sendMessage} />}
+        {pending && <p role="status">Thinking…</p>}
         <div ref={endRef} />
       </section>
 
       <footer className={styles.footer}>
         {storageError && <p className={styles.storageError} role="status">{storageError}</p>}
-        <ChatComposer key={conversationKey} onSend={sendMessage} disabled={!ready} />
+        {chatError && <p className={styles.storageError} role="alert">{chatError}</p>}
+        {!pending && messages.at(-1)?.role === "user" && (
+          <button className={styles.secondaryButton} onClick={retryMessage}>Retry reply</button>
+        )}
+        <ChatComposer key={conversationKey} onSend={sendMessage} disabled={!ready || pending} />
         <p className={styles.caption}>GA4 demo dataset · Nov 1, 2020 – Jan 31, 2021</p>
       </footer>
     </main>

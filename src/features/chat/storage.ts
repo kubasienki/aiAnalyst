@@ -1,4 +1,5 @@
 import { MAX_MESSAGE_LENGTH, MAX_SAVED_MESSAGES, type ChatMessage } from "./types";
+import { MAX_ASSISTANT_MESSAGE_LENGTH } from "../../shared/chat";
 
 const STORAGE_KEY = "hockeystack.chat.v1";
 
@@ -8,7 +9,9 @@ function isMessage(value: unknown): value is ChatMessage {
   return (
     typeof message.id === "string" && message.id.length <= 100 &&
     (message.role === "user" || message.role === "assistant") &&
-    typeof message.content === "string" && message.content.length <= MAX_MESSAGE_LENGTH
+    typeof message.content === "string" && message.content.length <= (
+      message.role === "assistant" ? MAX_ASSISTANT_MESSAGE_LENGTH : MAX_MESSAGE_LENGTH
+    )
   );
 }
 

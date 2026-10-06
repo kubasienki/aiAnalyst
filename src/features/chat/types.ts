@@ -1,8 +1,8 @@
-export type ChatMessage = {
+import { MAX_CHAT_MESSAGES, MAX_USER_MESSAGE_LENGTH, type ConversationMessage } from "../../shared/chat";
+
+export type ChatMessage = ConversationMessage & {
   id: string;
-  role: "user" | "assistant";
-  content: string;
 };
 
-export const MAX_MESSAGE_LENGTH = 2_000;
-export const MAX_SAVED_MESSAGES = 40;
+export const MAX_MESSAGE_LENGTH = MAX_USER_MESSAGE_LENGTH;
+export const MAX_SAVED_MESSAGES = MAX_CHAT_MESSAGES;

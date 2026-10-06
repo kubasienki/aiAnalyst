@@ -1,6 +1,6 @@
 # HockeyStack Analyst
 
-Next.js App Router and TypeScript application with an initial chat UI.
+Next.js App Router and TypeScript application with an OpenRouter-powered chat and a separate guarded BigQuery data layer.
 
 ## Local development
 
@@ -13,14 +13,18 @@ npm run dev
 
 Open http://localhost:3000. Try an example question or type a message. Enter sends; Shift + Enter adds a line. New conversation clears history and the draft.
 
-This is a UI preview: the analysis API is not connected and responses explicitly say so. No API keys or Google credentials are needed. The latest 20 message pairs are saved in this browser; storage failures leave the conversation usable in memory.
+For AI replies, copy `.env.example` to `.env.local` and set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` to an OpenRouter model ID available to your account. Restart the development server after changing configuration. Keys stay on the server; no Google credentials are needed for chat. See the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart) for keys and model IDs.
+
+Chat sends one non-streaming model request per turn through `POST /api/chat`. The recent conversation is included for follow-up questions. The model has no tools or dataset access yet and is instructed not to invent analytical results. Loading and retry states are shown; New conversation cancels the browser request and prevents an old reply from entering the new conversation. Provider requests have a 60-second deadline and a 2,000-token output ceiling, with no automatic retries. Incomplete or filtered replies are reported as failures rather than saved as completed answers. Sending a follow-up after a failure preserves the unanswered question; retry resends the existing conversation.
+
+The latest 40 messages are saved in this browser; storage failures leave the conversation usable in memory. Context sent to the model is bounded to 39 messages and 64,000 characters, dropping older turns when needed. Browser history is client-supplied, not durable server conversation storage. This initial endpoint has no authentication or per-user rate limiting and is intended for local development.
 
 ## Commands
 
 - `npm run dev`: start the development server.
 - `npm run lint`: run ESLint.
 - `npm run typecheck`: check TypeScript types.
-- `npm test`: run deterministic data-layer tests with fake BigQuery dependencies.
+- `npm test`: run deterministic data-layer and chat tests with fake external dependencies.
 - `npm run build`: create a production build.
 - `npm start`: serve a production build.
 - `npm run bigquery:check`: dry-run a fixed one-day GA4 query to check access.
@@ -29,7 +33,7 @@ This is a UI preview: the analysis API is not connected and responses explicitly
 
 ## BigQuery setup
 
-The server uses Google's official BigQuery SDK and Application Default Credentials (ADC). The chat remains a UI preview; the connection check is a separate command. No database copy is required: Google's public project hosts the data, and your project runs query jobs.
+The server uses Google's official BigQuery SDK and Application Default Credentials (ADC). Chat does not call BigQuery yet; the connection check is a separate command. No database copy is required: Google's public project hosts the data, and your project runs query jobs.
 
 1. Select or create a [Google Cloud project](https://console.cloud.google.com/projectselector2/home/dashboard) and [enable the BigQuery API](https://console.cloud.google.com/apis/library/bigquery.googleapis.com) in it. The query identity needs `bigquery.jobs.create`, for example through the BigQuery Job User role on that project. See [Google's prerequisites](https://developers.google.com/analytics/bigquery/web-ecommerce-demo-dataset).
 2. Install the [Google Cloud CLI](https://docs.cloud.google.com/sdk/docs/install), then sign in for application credentials:
@@ -79,18 +83,21 @@ Run `npm run bigquery:verify` after configuring credentials. It executes four re
 
 ```text
 src/
-  app/                 Page shell, layout, styles; future HTTP route handlers
+  app/                 Page shell, layout, styles, thin /api/chat route
   features/chat/       Chat components, useChat state hook, browser storage
   server/
+    chat/              Single-turn chat service and model boundary
     analysis/          Future conversational analysis orchestration
     agent/             Future domain-independent agent runner
     data/              Query service, SQL policy, semantic guide, execution context
-    adapters/          BigQuery client, job gateway, and result normalization
-    config/            Validated configuration and data-layer composition
-  shared/              Future browser-safe contracts and validation schemas
+    adapters/          OpenRouter HTTP adapter; BigQuery client and job gateway
+    config/            Server configuration and dependency composition
+  shared/              Browser-safe chat contracts and input validation
 scripts/               BigQuery connection and live data-layer checks
 ```
 
 `ChatApp` composes presentation components. `useChat` owns conversation updates, while `storage.ts` owns browser persistence and validates restored messages. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
 
-The query-service, BigQuery, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded only when the data layer is created, so the UI builds without Google credentials. Chat APIs, agent execution, conversation persistence, charts, and streamed progress are not implemented yet.
+The chat service owns the server prompt and depends on a `ChatModel` interface. Its OpenRouter adapter owns HTTP requests, response validation, timeouts, and provider error mapping. Failures log only selected server diagnostics: category, configured model, HTTP status, a validated request ID when available, and numeric completion error codes. Raw bodies, credentials, and conversation contents are not logged. `config/chat.ts` constructs them; the route validates browser input and maps application errors to HTTP responses. This keeps the provider separate from the later analysis workflow.
+
+The query-service, chat, adapters, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded on demand, so builds need no credentials. Agent execution, durable server conversation persistence, charts, and streaming are not implemented yet.
