@@ -7,15 +7,19 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bigquery:check": "tsx --conditions=react-server scripts/check-bigquery.ts"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "@google-cloud/bigquery": "9.1.0",
+    "@next/env": "16.3.8",
     "next": "16.3.8",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -23,6 +27,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.8",
+    "tsx": "4.23.15",
     "typescript": "6.0.2"
   }
 }
