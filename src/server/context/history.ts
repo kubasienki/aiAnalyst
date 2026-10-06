@@ -100,6 +100,10 @@ function reconstructRun(run: ConversationRun, events: ConversationEvent[]): Hist
       interactions.push({ runId: run.id, kind: "user", events: [event], complete: true });
       continue;
     }
+    if (payload.kind === "context_note") {
+      interactions.push({ runId: run.id, kind: "note", events: [event], complete: true });
+      continue;
+    }
     const calls = payload.message.toolCalls;
     for (const call of calls) {
       if (seenCallIds.has(call.callId)) {

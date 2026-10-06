@@ -16,7 +16,7 @@ export class ContextError extends Error {
 // reference the original event owned by an earlier attempt.
 export type HistoryInteraction = {
   runId: string;
-  kind: "user" | "assistant" | "tool_interaction" | "outcome";
+  kind: "user" | "assistant" | "tool_interaction" | "outcome" | "note";
   events: ConversationEvent[];
   complete: boolean;
 };

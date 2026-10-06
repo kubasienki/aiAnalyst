@@ -414,6 +414,13 @@ export function openConversationRepository(options: Options): ConversationReposi
         return createRun(parsed, requestJson, source);
       }));
     },
+    appendContextNote(runId, content) {
+      return perform(() => transaction(() => {
+        const run = requireActiveRun(identitySchema.parse(runId));
+        const payload = eventPayloadSchema.parse({ kind: "context_note", content });
+        return appendEvent(run, payload, now());
+      }));
+    },
     appendAssistant(runId, message) {
       return perform(() => transaction(() => {
         const run = requireActiveRun(identitySchema.parse(runId));

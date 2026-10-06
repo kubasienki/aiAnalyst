@@ -41,6 +41,7 @@ export interface ConversationRepository {
   startRun(input: StartRunInput): Promise<StartRunResult>;
   retryRun(input: RetryRunInput): Promise<StartRunResult>;
   appendAssistant(runId: string, message: AssistantMessage): Promise<ConversationEvent>;
+  appendContextNote(runId: string, content: string): Promise<ConversationEvent>;
   recordToolResult(runId: string, result: StoredToolResult, evidence?: EvidenceInput): Promise<ConversationEvent>;
   finishRun(runId: string, input: FinishRunInput): Promise<ConversationRun>;
   loadHistory(conversationId: string): Promise<ConversationHistory>;

@@ -43,6 +43,9 @@ export function projectContext(selection: ContextSelection, history: Reconstruct
       eventIds.add(event.id);
       const payload = event.payload;
       switch (payload.kind) {
+        case "context_note":
+          messages.push({ role: "system", content: payload.content });
+          break;
         case "user_message":
           messages.push({ role: "user", content: payload.content });
           break;

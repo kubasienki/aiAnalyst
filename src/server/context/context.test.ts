@@ -297,6 +297,41 @@ afterEach(() => {
 });
 
 describe("context from reopened SQLite history", () => {
+  it("preserves protocol notes as system context without manufacturing user turns", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "hockeystack-context-note-"));
+    directories.push(directory);
+    const databasePath = join(directory, "conversation.sqlite");
+    const repository = openConversationRepository({ databasePath });
+    repositories.push(repository);
+    const conversation = await repository.createConversation();
+    const { run } = await repository.startRun({
+      conversationId: conversation.id, clientMessageId: randomUUID(), message: "December revenue?",
+      deadline: Date.now() + 120_000, versions,
+    });
+    await repository.appendAssistant(run.id, {
+      role: "assistant", content: "Unaccepted prose", toolCalls: [],
+    });
+    await expect(repository.appendContextNote(run.id, "")).rejects.toThrow();
+    const note = await repository.appendContextNote(run.id, "Choose one available tool action.");
+    repository.close();
+
+    const reopened = openConversationRepository({ databasePath });
+    repositories.push(reopened);
+    const history = await reopened.loadHistory(conversation.id);
+    const context = build({
+      history, targetRunId: run.id, instructions: ["Analyst instructions"], requestSettings: settings(),
+    });
+    expect(context.messages.slice(-2)).toEqual([
+      { role: "assistant", content: "Unaccepted prose", toolCalls: [] },
+      { role: "system", content: "Choose one available tool action." },
+    ]);
+    expect(context.includedEventIds).toContain(note.id);
+    expect(context.messages.filter(message => message.role === "user")).toHaveLength(1);
+    expect(() => serializeRequest({ ...settings(), messages: context.messages }, versions.model)).not.toThrow();
+    await reopened.finishRun(run.id, { outcome: failure });
+    await expect(reopened.appendContextNote(run.id, "Another action.")).rejects.toThrow();
+  });
+
   it("continues clarification and retries the same question after reopening", async () => {
     const directory = mkdtempSync(join(tmpdir(), "hockeystack-context-retry-"));
     directories.push(directory);

@@ -82,6 +82,7 @@ export const storedToolResultSchema = z.strictObject({
 });
 
 export const eventPayloadSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("context_note"), content: z.string().trim().min(1).max(2_000) }),
   z.strictObject({
     kind: z.literal("user_message"),
     content: z.string().trim().min(1).max(2_000),

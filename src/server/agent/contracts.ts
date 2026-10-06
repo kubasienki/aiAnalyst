@@ -91,19 +91,43 @@ export interface AgentModel {
   complete(request: ModelRequest): Promise<ModelResponse>;
 }
 
-export type ToolExecution<TOutcome> =
-  | { kind: "continue"; content: JsonValue }
+export const recoverableToolErrorSchema = z.strictObject({
+  code: z.string().regex(/^[a-z0-9_]{1,100}$/),
+  message: z.string().min(1).max(2_000),
+});
+
+export type RecoverableToolError = z.infer<typeof recoverableToolErrorSchema>;
+export type ToolRole = "continuing" | "terminal";
+
+// Suppress unchanged arguments permanently for deterministic failures. Other
+// failures may be reconsidered after a successful continuing tool checkpoint.
+export type FailureRepeatPolicy = "unchanged_arguments" | "until_progress";
+
+export type ToolInvocationContext<TContext> = {
+  applicationContext: TContext;
+  signal: AbortSignal;
+  deadline: number;
+  checkContinuation(content: JsonValue): void;
+};
+
+export type ToolExecution<TOutcome, TArtifact = never> =
+  | { kind: "continue"; content: JsonValue; artifact?: TArtifact }
+  | { kind: "error"; error: RecoverableToolError; repeatPolicy?: FailureRepeatPolicy; artifact?: TArtifact }
   | { kind: "terminal"; acknowledgment: JsonValue; outcome: TOutcome };
 
 // A registered tool will close over its schema and validate unknown arguments.
 // The runner never needs to cast heterogeneous tool arguments to a domain type.
-export type RegisteredTool<TContext, TOutcome> = ToolDescription & {
-  execute(argumentsValue: unknown, context: TContext): Promise<ToolExecution<TOutcome>>;
+export type RegisteredTool<TContext, TOutcome, TArtifact = never> = ToolDescription & {
+  role: ToolRole;
+  isAvailable?(context: TContext): boolean;
+  execute(argumentsValue: unknown, context: ToolInvocationContext<TContext>): Promise<ToolExecution<TOutcome, TArtifact>>;
 };
 
-export type ToolDefinition<TArguments, TContext, TOutcome> = {
+export type ToolDefinition<TArguments, TContext, TOutcome, TArtifact = never> = {
   name: string;
   description: string;
+  role: ToolRole;
+  isAvailable?(context: TContext): boolean;
   argumentsSchema: z.ZodType<TArguments>;
-  handle(argumentsValue: TArguments, context: TContext): Promise<ToolExecution<TOutcome>>;
+  handle(argumentsValue: TArguments, context: ToolInvocationContext<TContext>): Promise<ToolExecution<TOutcome, TArtifact>>;
 };
