@@ -18,21 +18,13 @@ import type { JsonValue } from "../src/server/contracts/json";
 import { jsonValueSchema } from "../src/server/contracts/json";
 import { ContextError } from "../src/server/context/contracts";
 import { ModelError } from "../src/server/agent/errors";
+import { analystEvaluationCases } from "./analyst-evaluation-cases";
 
 class VerificationFailure extends Error {
   constructor(public readonly category: string) {
     super("Live analyst verification failed.");
   }
 }
-
-const evaluationConversations = [
-  ["How much revenue did we make in December 2020?", "How did it compare with November?", "Which devices contributed most to that change?"],
-  ["What was session purchase conversion in December 2020?", "What about mobile only?", "What about the previous month?"],
-  ["What were the top five products by recorded item revenue in January 2021?"],
-  ["Where did sessions stop progressing through the ordered checkout funnel in December 2020?"],
-  ["Why did recorded revenue drop in January compared with December? Investigate observable contributors."],
-  ["Why did revenue decline from November to December 2020?"],
-];
 
 async function saveCheckpoint(repository: ConversationRepository, runId: string, event: AnalysisCheckpoint) {
   switch (event.kind) {
@@ -67,8 +59,10 @@ async function saveCheckpoint(repository: ConversationRepository, runId: string,
 
 async function main() {
   const argumentsValue = process.argv.slice(2);
-  if (argumentsValue.some(argument => argument !== "--evaluate")) {
-    throw new Error("Usage: npm run analyst:check -- [--evaluate]");
+  const selectedCaseIds = argumentsValue.filter(argument => argument.startsWith("--case=")).map(argument => argument.slice("--case=".length));
+  if (argumentsValue.some(argument => argument !== "--evaluate" && !argument.startsWith("--case="))
+    || selectedCaseIds.some(id => !analystEvaluationCases.some(evaluationCase => evaluationCase.id === id))) {
+    throw new Error("Usage: npm run analyst:check -- [--evaluate] [--case=<case-id> ...]");
   }
   loadEnvConfig(process.cwd(), true);
   const config = readOpenRouterConfig();
@@ -80,10 +74,19 @@ async function main() {
   let repository = openConversationRepository({ databasePath });
   const report: JsonValue[] = [];
   try {
-    const conversations = argumentsValue.includes("--evaluate") ? evaluationConversations : [[evaluationConversations[0][0]]];
-    for (const questions of conversations) {
+    let evaluationCases = analystEvaluationCases;
+    if (selectedCaseIds.length > 0) {
+      evaluationCases = analystEvaluationCases.filter(evaluationCase => selectedCaseIds.includes(evaluationCase.id));
+    } else if (!argumentsValue.includes("--evaluate")) {
+      const scalarCase = analystEvaluationCases.find(evaluationCase => evaluationCase.id === "scalar-and-comparison");
+      if (!scalarCase) {
+        throw new VerificationFailure("missing_scalar_case");
+      }
+      evaluationCases = [{ ...scalarCase, questions: [scalarCase.questions[0]] }];
+    }
+    for (const evaluationCase of evaluationCases) {
       const conversation = await repository.createConversation();
-      for (const question of questions) {
+      for (const question of evaluationCase.questions) {
         const signal = new AbortController().signal;
         const deadline = Date.now() + 120_000;
         const previousHistory = await repository.loadHistory(conversation.id);
@@ -99,8 +102,13 @@ async function main() {
           await repository.finishRun(run.id, { outcome: { kind: "failure", status: result.error.code === "cancelled" ? "cancelled" : "failed", error: result.error } });
           throw new VerificationFailure(result.error.code);
         }
-        assert.equal(result.outcome.kind, "answer", "Golden questions must produce accepted answers");
-        if (result.outcome.kind !== "answer") throw new Error("Expected answer");
+        if (result.outcome.kind !== "answer") {
+          report.push({ caseId: evaluationCase.id, reviewCriteria: evaluationCase.reviewCriteria,
+            reviewStatus: "failed", question, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics });
+          mkdirSync(".data", { recursive: true });
+          writeFileSync(".data/analyst-check-report.json", JSON.stringify(report, null, 2));
+          throw new VerificationFailure("unexpected_clarification");
+        }
         assert.ok(result.outcome.answer.evidenceIds.length > 0, "Data answers need real evidence");
         const before = await repository.loadHistory(conversation.id);
         repository.close();
@@ -109,7 +117,8 @@ async function main() {
         assert.deepEqual(reopened, before, "Reopened SQLite exchange must remain intact");
         const supportingEvidence = reopened.evidence.filter(item => result.outcome.kind === "answer" && result.outcome.answer.evidenceIds.includes(item.evidence.resultId));
         assert.equal(supportingEvidence.length, result.outcome.answer.evidenceIds.length);
-        report.push({ question, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics,
+        report.push({ caseId: evaluationCase.id, reviewCriteria: evaluationCase.reviewCriteria,
+          reviewStatus: "pending", question, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics,
           evidence: supportingEvidence.map(item => ({ resultId: item.evidence.resultId, intent: item.declaredScope?.intent ?? null,
             sql: item.evidence.sql, rows: item.evidence.rows, truncated: item.evidence.truncated, jobId: item.evidence.jobId })) });
         mkdirSync(".data", { recursive: true });
@@ -118,7 +127,7 @@ async function main() {
           evidenceCount: supportingEvidence.length, completeness: result.outcome.answer.completeness });
       }
     }
-    console.log("Analyst live verification passed. Review narratives and SQL in .data/analyst-check-report.json against bigquery:verify; accepted protocol/provenance alone does not prove analytical correctness.");
+    console.log("Analyst protocol/provenance verification passed. Analytical review is pending: assess each report entry against its reviewCriteria using the narratives, SQL and rows in .data/analyst-check-report.json. Use bigquery:verify for independent reference values.");
   } finally {
     repository.close();
     rmSync(directory, { recursive: true, force: true });

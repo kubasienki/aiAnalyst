@@ -41,6 +41,29 @@ export function orderedCheckoutSql(eventsSql: string): string {
     FROM (SELECT COUNT(*) AS event_count FROM events) totals`;
 }
 
+// Developer-owned query examples. Counts retain the ordered population defined
+// above; reshaping does not recompute the journey or change its denominator.
+export function checkoutStageRowsSql(countsSql: string): string {
+  return `WITH counts AS (${countsSql}), stages AS (
+    SELECT 1 AS stage_order, 'Started checkout' AS stage, checkout_sessions AS sessions FROM counts
+    UNION ALL SELECT 2, 'Added shipping details', shipping_sessions FROM counts
+    UNION ALL SELECT 3, 'Added payment details', payment_sessions FROM counts
+    UNION ALL SELECT 4, 'Recorded purchase', purchase_sessions FROM counts
+  ) SELECT stage_order, stage, sessions FROM stages ORDER BY stage_order`;
+}
+
+export function checkoutTransitionRowsSql(countsSql: string): string {
+  return `WITH counts AS (${countsSql}), transitions AS (
+    SELECT 1 AS transition_order, 'Checkout to shipping details' AS transition,
+      checkout_sessions AS preceding_sessions, shipping_sessions AS next_sessions FROM counts
+    UNION ALL SELECT 2, 'Shipping details to payment details', shipping_sessions, payment_sessions FROM counts
+    UNION ALL SELECT 3, 'Payment details to recorded purchase', payment_sessions, purchase_sessions FROM counts
+  ) SELECT transition_order, transition, preceding_sessions, next_sessions,
+    SAFE_DIVIDE(next_sessions, preceding_sessions) AS progression_rate,
+    SAFE_DIVIDE(preceding_sessions - next_sessions, preceding_sessions) AS non_progression_rate
+    FROM transitions ORDER BY transition_order`;
+}
+
 export const REFERENCE_QUERIES = {
   decemberRevenue: `SELECT SUM(ecommerce.purchase_revenue_in_usd) AS revenue_usd
     FROM ${source} WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'

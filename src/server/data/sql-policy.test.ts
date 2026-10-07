@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { REFERENCE_QUERIES } from "./reference-queries";
+import { REFERENCE_QUERIES, checkoutStageRowsSql, checkoutTransitionRowsSql } from "./reference-queries";
 import { validateSql } from "./sql-policy";
 
 const table = "`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`";
 const bounded = `SELECT COUNT(*) AS n FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`;
 
 describe("SQL policy", () => {
+  it.each([checkoutStageRowsSql, checkoutTransitionRowsSql])("accepts checkout chart shaping without widening SQL policy", shapeQuery => {
+    const sql = shapeQuery(REFERENCE_QUERIES.decemberCheckout);
+    expect(validateSql(sql)).toBe(sql.trim());
+  });
+
   it.each(Object.entries(REFERENCE_QUERIES))("accepts reference %s", (_, sql) => {
     expect(validateSql(sql)).toBe(sql.trim());
   });

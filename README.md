@@ -32,7 +32,7 @@ Configure `SQLITE_DATABASE_PATH` to keep the SQLite database outside Git. This l
 - `npm run bigquery:verify`: opt-in live reference checks through the guarded query service.
 - `npm run bigquery:verify-funnel`: opt-in synthetic fixtures for ordered checkout-stage handling.
 - `npm run openrouter:check`: opt-in live tool call and continuation with a fixed local result (two billable model requests; no BigQuery access).
-- `npm run analyst:check`: opt-in real analyst loop using OpenRouter, guarded BigQuery and temporary SQLite; adds `-- --evaluate` for the golden-question conversations.
+- `npm run analyst:check`: opt-in real analyst loop using OpenRouter, guarded BigQuery and temporary SQLite; adds `-- --evaluate` for analytical evaluation conversations and per-case review criteria. See [analytical quality](docs/analytical-quality.md) for the review procedure.
 
 The analyst defines common GA4 metrics in a compact system prompt and has `inspect_dataset(topic)` for less-common schema details, observed event tags and parameter keys. That lookup uses a versioned local catalog, so it costs model context/request capacity but reads no BigQuery data. The catalog is partial discovery guidance, never an allowlist: if a question needs an unlisted key, the analyst can discover it through a narrowly bounded query via the same `run_sql` tool. The analyst uses `run_sql({ intent, sql })` for read-only warehouse queries and should project/aggregate only what the current analysis needs. BigQuery dry-run/maximum-byte limits guard scan cost; short SQL output alone does not guarantee a cheap scan.
 

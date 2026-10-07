@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { loadEnvConfig } from "@next/env";
 import { createBigQueryClient } from "../src/server/adapters/bigquery/client";
 import { readBigQueryConfig } from "../src/server/config/bigquery";
-import { orderedCheckoutSql } from "../src/server/data/reference-queries";
+import { orderedCheckoutSql, checkoutStageRowsSql, checkoutTransitionRowsSql } from "../src/server/data/reference-queries";
 
 type FixtureEvent = { user: string; session: number | null; name: string; timestamp: number; date: string };
 const stages = ["begin_checkout", "add_shipping_info", "add_payment_info", "purchase"];
@@ -68,6 +68,42 @@ async function main() {
   const expected = expectedCounts();
   assert.deepEqual(expected, { checkout_sessions: 6, shipping_sessions: 4, payment_sessions: 4, purchase_sessions: 3 });
   assert.deepEqual(results[0], expected);
+  const chartCounts = "SELECT 100 AS checkout_sessions, 80 AS shipping_sessions, 60 AS payment_sessions, 30 AS purchase_sessions";
+  const zeroCounts = "SELECT 100 AS checkout_sessions, 0 AS shipping_sessions, 0 AS payment_sessions, 0 AS purchase_sessions";
+  for (const fixture of [
+    {
+      query: checkoutStageRowsSql(chartCounts),
+      expected: [
+        { stage_order: 1, stage: "Started checkout", sessions: 100 },
+        { stage_order: 2, stage: "Added shipping details", sessions: 80 },
+        { stage_order: 3, stage: "Added payment details", sessions: 60 },
+        { stage_order: 4, stage: "Recorded purchase", sessions: 30 },
+      ],
+    },
+    {
+      query: checkoutTransitionRowsSql(chartCounts),
+      expected: [
+        { transition_order: 1, transition: "Checkout to shipping details", preceding_sessions: 100, next_sessions: 80, progression_rate: 0.8, non_progression_rate: 0.2 },
+        { transition_order: 2, transition: "Shipping details to payment details", preceding_sessions: 80, next_sessions: 60, progression_rate: 0.75, non_progression_rate: 0.25 },
+        { transition_order: 3, transition: "Payment details to recorded purchase", preceding_sessions: 60, next_sessions: 30, progression_rate: 0.5, non_progression_rate: 0.5 },
+      ],
+    },
+    {
+      query: checkoutTransitionRowsSql(zeroCounts),
+      expected: [
+        { transition_order: 1, transition: "Checkout to shipping details", preceding_sessions: 100, next_sessions: 0, progression_rate: 0, non_progression_rate: 1 },
+        { transition_order: 2, transition: "Shipping details to payment details", preceding_sessions: 0, next_sessions: 0, progression_rate: null, non_progression_rate: null },
+        { transition_order: 3, transition: "Payment details to recorded purchase", preceding_sessions: 0, next_sessions: 0, progression_rate: null, non_progression_rate: null },
+      ],
+    },
+  ]) {
+    const [chartJob] = await client.createQueryJob({
+      query: fixture.query, location: config.location, maximumBytesBilled: config.maximumBytesBilled,
+      useLegacySql: false, jobTimeoutMs: 30_000,
+    });
+    const [chartRows] = await chartJob.getQueryResults({ autoPaginate: false, maxResults: 10, timeoutMs: 30_000 });
+    assert.deepEqual(chartRows, fixture.expected);
+  }
   console.log("BigQuery checkout fixtures match the independent sequence oracle.", { jobId: job.id, counts: expected });
 }
 

@@ -107,6 +107,38 @@ function toolContents(messages: ModelMessage[]) {
 }
 
 describe("context reconstruction and projection", () => {
+  it("supplies accepted chart specifications and their evidence to follow-ups", () => {
+    const f = fixture();
+    const past = f.start("Compare December and January revenue");
+    const evidence = evidenceInput();
+    evidence.evidence.rows = [{ label: "December", revenue: "160555" }, { label: "January", revenue: "57350" }];
+    evidence.evidence.truncated = false;
+    evidence.evidence.truncationReason = undefined;
+    evidence.evidence.payloadBytes = Buffer.byteLength(JSON.stringify({ columns: evidence.evidence.columns, rows: evidence.evidence.rows }));
+    f.history.evidence.push({ ...evidence, conversationId: past.conversationId, runId: past.id, createdAt: 2 });
+    f.append(past, { kind: "assistant_message", message: call("revenue-query") });
+    f.append(past, { kind: "tool_result", result: { callId: "revenue-query", payload: { kind: "evidence", evidenceId: evidence.evidence.resultId } } });
+    const outcome: RunOutcome = {
+      kind: "answer",
+      answer: {
+        narrative: "January revenue declined compared with December.",
+        assumptions: [], limitations: [], completeness: "complete", evidenceIds: [evidence.evidence.resultId],
+        charts: [{
+          type: "bar", evidenceId: evidence.evidence.resultId, title: "Revenue comparison",
+          caption: "December 2020 and January 2021 recorded revenue in USD.",
+          x: { column: "label", label: "Month" },
+          series: [{ column: "revenue", label: "Revenue", format: { kind: "currency", currency: "USD" } }],
+        }],
+      },
+    };
+    f.terminal(past, outcome);
+    const active = f.start("What observable contributors explain that change?");
+    const context = f.construct(active);
+    expect(toolContents(context.messages)).toContainEqual({ acknowledgment: { accepted: true }, outcome });
+    expect(toolContents(context.messages)).toContainEqual(projectEvidence(evidence));
+    expect(context.includedEvidenceIds).toContain(evidence.evidence.resultId);
+  });
+
   it("reconstructs complete evidence above 32 KiB and registers only supplied results", () => {
     const f = fixture();
     const past = f.start();

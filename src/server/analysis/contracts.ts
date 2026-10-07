@@ -21,7 +21,8 @@ export type { AnalysisOutcome, Answer, Clarification } from "../../shared/analys
 
 // Basis belongs to the tool invocation, keeping stored Answer outcomes compatible.
 export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
-  charts: answerChartsSchema.describe("Optional visual support for the narrative. Supply [] for text-only answers. Reference saved evidence and columns; never copy values or write rendering code."),
+  narrative: answerSchema.shape.narrative.describe("Lead with the direct answer. Explain supported findings and their business implications; quantify relevant comparisons and contributors when the question warrants investigation. Distinguish observations from hypotheses and disclose unresolved questions. Keep scalar answers concise; do not merely repeat chart values."),
+  charts: answerChartsSchema.describe("Visual support for findings not already adequately charted in accepted conversation history. Prefer the smallest useful set; refer to unchanged earlier comparisons in prose. Supply [] for text-only answers. Reference saved evidence and columns; never copy values or write rendering code."),
   basis: z.enum(["data", "explanation"]).describe("Use data for any finding about this dataset. Explanation is only for conceptual guidance without empirical claims."),
 });
 
@@ -43,7 +44,7 @@ export const ANALYSIS_TOOL_DESCRIPTIONS = [
   },
   {
     name: "finish_answer",
-    description: "Finish with a supported narrative, assumptions, limitations, evidence references, and charts when they add insight. Chart specifications reference existing evidence columns, never copied data. Ends this run.",
+    description: "Finish after matching the investigation depth to the question and checking claim support and visual coverage against prior accepted charts. Explain findings, relevant comparisons, supported contributors and business implications in the narrative. Disclose unresolved investigation and honest completeness, with assumptions, limitations, evidence references, and useful charts. Chart specifications reference existing evidence columns, never copied data. Ends this run.",
     parameters: z.toJSONSchema(finishAnswerArgumentsSchema, { target: "draft-07" }),
   },
 ];

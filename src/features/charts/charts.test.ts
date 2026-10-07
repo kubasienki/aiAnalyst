@@ -21,6 +21,28 @@ function chart(): ResolvedChart {
 }
 
 describe("chart presentation", () => {
+  it("preserves and formats signed percentage changes without losing zero", () => {
+    const source: ResolvedChart = {
+      kind: "ready",
+      spec: {
+        type: "bar", evidenceId: randomUUID(), title: "Relative metric changes",
+        caption: "Relative changes are not additive contributions to revenue.",
+        x: { column: "metric", label: "Metric" },
+        series: [{ column: "change", label: "Change", format: { kind: "percentage", inputScale: "ratio" } }],
+      },
+      rows: [{ metric: "Conversion", change: -0.406 }, { metric: "Traffic", change: 0 }, { metric: "Purchase value", change: 0.278 }],
+    };
+    if (source.spec.type !== "bar") throw new Error("Expected bar chart");
+    expect(buildPlotRows(source).map(row => row.values[0])).toEqual([-0.406, 0, 0.278]);
+    expect(formatChartTick(-0.406, source.spec.series[0].format)).toBe("-40.6%");
+    expect(formatChartValue(0, source.spec.series[0].format)).toBe("0%");
+    expect(formatChartValue(27.8, { kind: "percentage", inputScale: "percent" })).toBe("27.8%");
+    const tooltip = renderToStaticMarkup(createElement(ChartTooltip, {
+      spec: source.spec, active: true, payload: [{ payload: buildPlotRows(source)[0] }],
+    }));
+    expect(tooltip).toContain("-40.6%");
+  });
+
   it("formats original decimals, currencies, percentages and missing values", () => {
     expect(formatChartValue("1.005", { kind: "currency", currency: "USD" })).toBe("$1.01");
     expect(formatChartValue("0.125", { kind: "percentage", inputScale: "ratio" })).toBe("12.5%");

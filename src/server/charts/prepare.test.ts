@@ -45,6 +45,35 @@ function prepare(spec: ChartSpec = specs[0], result = evidence()) {
 }
 
 describe("chart evidence preparation", () => {
+  it("keeps checkout transitions in supplied journey order, including undefined rates", () => {
+    const spec: ChartSpec = {
+      ...common, type: "bar", x: { column: "transition", label: "Checkout step" },
+      series: [{ column: "rate", label: "Sessions not reaching the next recorded step", format: { kind: "percentage", inputScale: "ratio" } }],
+    };
+    const source = evidence({
+      columns: [{ name: "transition", type: "STRING" }, { name: "rate", type: "FLOAT" }],
+      rows: [
+        { transition: "Checkout to shipping details", rate: 0.2 },
+        { transition: "Shipping details to payment details", rate: 0.25 },
+        { transition: "Payment details to recorded purchase", rate: null },
+      ],
+    });
+    expect(prepare(spec, source)).toEqual({ ok: true, charts: [{ kind: "ready", spec, rows: source.rows }] });
+  });
+
+  it("preserves negative, zero and positive percentage changes in ordinary bars", () => {
+    const spec: ChartSpec = {
+      ...common, type: "bar", x: { column: "label", label: "Metric" },
+      series: [{ column: "change", label: "Relative change", format: { kind: "percentage", inputScale: "ratio" } }],
+    };
+    const source = evidence({
+      columns: [{ name: "label", type: "STRING" }, { name: "change", type: "FLOAT" }],
+      rows: [{ label: "Conversion", change: -0.406 }, { label: "Traffic", change: 0 }, { label: "Purchase value", change: 0.278 }],
+    });
+    expect(prepare(spec, source)).toEqual({ ok: true, charts: [{ kind: "ready", spec, rows: source.rows }] });
+    expect(prepare({ ...spec, type: "stacked_bar" }, source).ok).toBe(false);
+  });
+
   it.each(specs)("extracts a $type chart without copying unrelated evidence", spec => {
     const source = evidence();
     const original = JSON.stringify(source);

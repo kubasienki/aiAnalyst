@@ -50,7 +50,17 @@ only position these display components within an answer.
 
 New `finish_answer` calls require a `charts` array. Use `[]` when no chart helps.
 Stored `Answer.charts` is optional so historical answers remain readable without
-rewriting saved JSON. Prompt/tool versions are `analyst-v6` and `analysis-tools-v5`.
+rewriting saved JSON. Prompt/tool versions are `analyst-v9` and `analysis-tools-v7`.
+
+Checkout overviews use ordered session stages: Started checkout, Added shipping
+details, Added payment details, Recorded purchase. Step-to-step rates use ordinary
+bars with transitions as category rows in journey order. Period comparisons use
+periods as series. Captions identify progression versus observed non-progression
+and each preceding-stage denominator; recorded details do not imply shipment or
+confirmed payment, and missing progression does not establish abandonment.
+The catalog supplies stage/transition SQL shapes with numeric ordering and
+SAFE_DIVIDE for undefined rates. These are model guidance, not semantic runtime
+validation; saved charts retain their original wording.
 No database schema migration is required for charts.
 
 Each specification has `type`, `evidenceId`, `title`, `caption` and the relevant

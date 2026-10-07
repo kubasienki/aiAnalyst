@@ -2,7 +2,7 @@
 
 import {
   Bar, BarChart, CartesianGrid, Cell, Funnel, FunnelChart, LabelList, Legend,
-  Line, LineChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
+  Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ChartSpec, ResolvedChart } from "../../shared/charts";
 import { ChartTooltip } from "./ChartTooltip";
@@ -38,10 +38,15 @@ function SeriesPlot({ spec, rows }: PlotProps<SeriesSpec>) {
   return (
     <BarChart data={rows} layout="vertical" margin={{ top: 20, right: 20, bottom: 15, left: 5 }} accessibilityLayer>
       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-      <XAxis type="number" tickFormatter={value => formatChartTick(value, spec.series[0].format)} />
+      <XAxis
+        type="number"
+        domain={([minimum, maximum]: readonly [number, number]) => [Math.min(0, minimum), Math.max(0, maximum)]}
+        tickFormatter={value => formatChartTick(value, spec.series[0].format)}
+      />
       <YAxis type="category" dataKey="label" width={145} interval={0} tick={<CategoryTick />} />
       <Tooltip content={<ChartTooltip spec={spec} />} filterNull={false} />
       <Legend verticalAlign="top" />
+      <ReferenceLine x={0} stroke="#64748b" />
       {spec.series.map((field, index) => (
         <Bar key={field.column} dataKey={(row: PlotRow) => row.values[index]} name={field.label}
           fill={colors[index]} stackId={spec.type === "stacked_bar" ? "composition" : undefined}
