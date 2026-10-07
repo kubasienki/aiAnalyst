@@ -1,17 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { jsonValueSchema, type JsonValue } from "../contracts/json";
+import { canonicalJson } from "../contracts/json-equality";
 import type { FailureRepeatPolicy, RecoverableToolError, RegisteredTool, ToolCall } from "./contracts";
-
-function canonicalJson(value: JsonValue): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 type ResolvedAction<TContext, TOutcome, TArtifact> =
   | { kind: "feedback"; fingerprint: string; error: RecoverableToolError; repeatPolicy: FailureRepeatPolicy }

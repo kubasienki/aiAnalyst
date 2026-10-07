@@ -8,7 +8,8 @@ import {
 import { inspectMessageSequence } from "../../agent/message-sequence";
 import { ModelError } from "../../agent/errors";
 import { jsonValueSchema } from "../../contracts/json";
-import { safeIdentifier, type CompletionEnvelope } from "./transport";
+import { safeIdentifier } from "../../contracts/identity";
+import type { CompletionEnvelope } from "./transport";
 
 const toolDescriptionSchema = z.strictObject({
   name: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
