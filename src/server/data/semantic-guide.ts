@@ -1,8 +1,9 @@
 import "server-only";
+import { DATASET_CATALOG_VERSION } from "./dataset-catalog";
 
 // This version covers definitions and the verified historical schema supplied
 // with the prompt. Historical evidence retains its original version/snapshot.
-export const SEMANTIC_GUIDE_VERSION = "ga4-sample-v2";
+export const SEMANTIC_GUIDE_VERSION = "ga4-sample-v5";
 
 export const SEMANTIC_GUIDE = `
 Source: bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_* (BigQuery US).
@@ -80,3 +81,62 @@ Select only necessary fields: projecting whole repeated arrays can exceed proces
 Use the supported built-in subset and adapt supplied examples rather than bypassing validation.
 Service truncation is an incomplete prefix. SQL top-N is a deliberate subset, not a population total.
 `.trim();
+
+
+// Stable definitions that are useful on most turns; uncommon schema and event
+// vocabulary is retrieved from the local catalog only when the question needs it.
+export const ANALYST_CORE_GUIDE = `
+Source: the public Google Merchandise Store GA4 sample, 2020-11-01 through 2021-01-31.
+One source row is an event, not a user, session, order or item. The sample is obfuscated.
+Common physical fields: event_date STRING (YYYYMMDD), event_name STRING, event_timestamp INTEGER
+(microseconds), user_pseudo_id STRING, ecommerce.purchase_revenue_in_usd FLOAT,
+device.category STRING. Tables are daily events_YYYYMMDD tables in the public dataset.
+Revenue: purchase-event SUM(ecommerce.purchase_revenue_in_usd), in USD; not profit/net revenue.
+Purchase counts are purchase events. Transaction IDs include placeholders/repeats; do not deduplicate.
+Average purchase value = recorded purchase revenue / purchase events.
+User = distinct available user_pseudo_id; it is a pseudonymous device/browser identity, not a person.
+User purchase rate = purchasing users / users. Never sum distinct users over overlapping groups.
+Products use recorded item.item_revenue_in_usd and item.quantity on purchase items, grouped by item_id.
+Never sum event revenue after UNNEST(items); preserve missing items/quantities/revenue.
+Session key = (available user_pseudo_id, ga_session_id int_value from event_params).
+Activity-period session conversion = sessions with >=1 purchase / observed sessions in that period.
+Do not count session_start events or session IDs alone; recompute distinct sessions for each whole period.
+Detailed tags, custom event parameters, uncommon fields and ordered checkout definitions are available
+through inspect_dataset(topic). Use that local catalog when needed before writing the relevant SQL.
+The catalog is a convenience, never an allowlist. If a needed field/tag is unlisted, discover it with
+a narrowly date- and event-bounded run_sql query. Project only the requested nested keys or aggregate;
+do not load arbitrary event rows or every tag into context. The same guarded SQL boundary remains open
+to supported analyses beyond the catalog. A discovery scan consumes the normal BigQuery byte budget.
+Use bounded _TABLE_SUFFIX dates and event_date for reporting. Null is not zero.
+Use SAFE_DIVIDE and report denominators. Never average subgroup rates without their weights.
+Item-list/name and source categories can be unavailable or shared. State the chosen grouping.
+Record observed contributors, not causes. Missing funnel stages are not proof of abandonment.
+Preserve NULL separately from zero. A NULL SUM for an unavailable-ID bucket means its amount is unknown/not recorded;
+never describe it as zero, no revenue, or no impact.
+`.trim();
+
+const EVIDENCE_DEFINITIONS = {
+  revenue: "Purchase revenue is the sum of ecommerce.purchase_revenue_in_usd on purchase events, in USD. Count purchases as events; transaction IDs are unreliable placeholders/repeats. This is not net revenue or profit.",
+  product: "Product results use recorded item_revenue_in_usd and quantity on purchase items. Group by item_id; names can be shared or vary. UNNEST(items) changes grain: do not aggregate event-level revenue after item expansion. Preserve nulls.",
+  user: "A user is a distinct available user_pseudo_id, a pseudonymous device/browser identity. Purchasing-user rate is purchasing users / users. Distinct users are not additive across overlapping groups.",
+  session: "A session is (available user_pseudo_id, ga_session_id extracted from event_params.int_value), with activity in the requested dates. Session purchase conversion is sessions with >=1 purchase / observed sessions. Recompute period distincts; sessions can cross dates/months.",
+  checkout: "Closed observed checkout = begin_checkout -> add_shipping_info -> add_payment_info -> purchase, in strictly increasing timestamps within the period. Match each next stage after its predecessor; count sessions once. Missing progression does not prove abandonment.",
+  acquisition: "traffic_source is first-user acquisition, not session attribution. Sample source/medium varies within pseudonymous users; caveat it and do not imply ROI or unique attribution.",
+};
+
+// Persist only definitions indicated by the actual validated SQL, not the full
+// prompt/catalog on every query result. The evidence keeps its original version.
+export function semanticSnapshotForQuery(sql: string): string {
+  const normalizedSql = sql.toLowerCase();
+  const definitions: string[] = [];
+  if (/purchase_revenue|purchase|transaction_id|revenue|\borders?\b/.test(normalizedSql)) definitions.push(EVIDENCE_DEFINITIONS.revenue);
+  if (/items|item_|product|quantity/.test(normalizedSql)) definitions.push(EVIDENCE_DEFINITIONS.product);
+  if (/user_pseudo_id|purchasing_users/.test(normalizedSql)) definitions.push(EVIDENCE_DEFINITIONS.user);
+  if (/ga_session_id|session|checkout|funnel/.test(normalizedSql)) {
+    definitions.push(EVIDENCE_DEFINITIONS.session);
+  }
+  if (/begin_checkout|add_shipping_info|add_payment_info/.test(normalizedSql)) definitions.push(EVIDENCE_DEFINITIONS.checkout);
+  if (/traffic_source|campaign|medium|source/.test(normalizedSql)) definitions.push(EVIDENCE_DEFINITIONS.acquisition);
+  if (definitions.length === 0) definitions.push("One source row is a recorded event. Preserve nulls and state the SQL's period and aggregation scope.");
+  return `${SEMANTIC_GUIDE_VERSION}; catalog ${DATASET_CATALOG_VERSION}\n${definitions.join("\n")}`;
+}

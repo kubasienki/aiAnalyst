@@ -14,6 +14,7 @@ describe("SQL policy", () => {
     `WITH x AS (${bounded}) SELECT n FROM x`,
     `SELECT n FROM (${bounded}) x`,
     `SELECT (SELECT MAX(value.int_value) FROM UNNEST(event_params) WHERE key='ga_session_id') AS session_id FROM ${table} WHERE _TABLE_SUFFIX='20201201'`,
+    `SELECT parameter.key, COUNT(*) AS occurrences FROM ${table} CROSS JOIN UNNEST(event_params) AS parameter WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231' GROUP BY parameter.key`,
     `${bounded} UNION ALL ${bounded}`,
     `SELECT COUNT(*) FROM ${table} e WHERE e._TABLE_SUFFIX >= '20201201' AND e._TABLE_SUFFIX <= '20201231'`,
     `SELECT COUNT(*) FROM ${table} a JOIN ${table} b ON a.user_pseudo_id=b.user_pseudo_id WHERE a._TABLE_SUFFIX='20201201' AND b._TABLE_SUFFIX='20201202'`,

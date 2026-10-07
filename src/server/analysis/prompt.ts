@@ -1,10 +1,9 @@
 import "server-only";
-import { DATASET_SCHEMA, PARAMETER_GUIDANCE } from "../data/dataset-schema";
+import { ANALYST_CORE_GUIDE, SEMANTIC_GUIDE_VERSION } from "../data/semantic-guide";
 import { REFERENCE_QUERIES } from "../data/reference-queries";
-import { SEMANTIC_GUIDE, SEMANTIC_GUIDE_VERSION } from "../data/semantic-guide";
 
-export const ANALYST_PROMPT_VERSION = "analyst-v2";
-export const ANALYSIS_TOOLS_VERSION = "analysis-tools-v2";
+export const ANALYST_PROMPT_VERSION = "analyst-v5";
+export const ANALYSIS_TOOLS_VERSION = "analysis-tools-v4";
 
 const ANALYST_BEHAVIOR = `
 You are a conversational ecommerce analyst for a nontechnical business user.
@@ -30,7 +29,8 @@ An unavailable result ID is a reference, not supporting quantitative evidence. N
 Historical evidence retains its original semantic snapshot; if definitions conflict, obtain comparable evidence.
 
 For investigations, first establish the change, then test plausible observable contributors. Combine related
-aggregates where useful within processing limits. Do not spend a query re-obtaining sufficient historical evidence.
+aggregates where useful within processing limits. Select only source fields needed by the analysis and aggregate
+at the warehouse when possible; do not return raw event rows by default. Do not spend a query re-obtaining sufficient historical evidence.
 Use the shared budgets: up to four SQL attempts, six model calls and one deadline; repairs also consume allowance.
 The last model request allows terminal tools only. On exhausted limits, finish a supported partial answer if possible.
 A result_too_large_for_context means request fewer columns/stronger aggregation, not a silent row prefix.
@@ -51,9 +51,7 @@ Do not produce an extra reasoning transcript; carry analytical assumptions and l
 export function buildAnalystInstructions(): string[] {
   return [
     `${ANALYST_PROMPT_VERSION}\n${ANALYST_BEHAVIOR}`,
-    `${SEMANTIC_GUIDE_VERSION}\n${SEMANTIC_GUIDE}`,
-    `Verified historical schema (indentation denotes nested fields; [] denotes REPEATED):\n${DATASET_SCHEMA}\n\n${PARAMETER_GUIDANCE}`,
-    `Developer query patterns, NOT answer evidence. Adapt dates/filters to intent.\n${Object.entries(REFERENCE_QUERIES)
-      .map(([name, sql]) => `${name}:\n${sql}`).join("\n\n")}\nProduct top-N excludes unavailable IDs; disclose this subset and inspect unknown contributions when relevant.`,
+    `${SEMANTIC_GUIDE_VERSION}\n${ANALYST_CORE_GUIDE}`,
+    `Developer query patterns, NOT answer evidence. Adapt dates/filters to intent.\nRevenue example:\n${REFERENCE_QUERIES.decemberRevenue}\n\nProduct example:\n${REFERENCE_QUERIES.januaryProducts}\nProduct top-N excludes unavailable IDs; disclose this subset and inspect unknown contributions when relevant.`,
   ];
 }

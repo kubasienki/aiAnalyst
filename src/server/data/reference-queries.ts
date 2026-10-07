@@ -63,5 +63,14 @@ export const REFERENCE_QUERIES = {
       FROM events WHERE session_id IS NOT NULL GROUP BY user_pseudo_id, session_id)
     SELECT COUNT(*) AS sessions, COUNTIF(purchases > 0) AS purchasing_sessions,
       SAFE_DIVIDE(COUNTIF(purchases > 0), COUNT(*)) AS session_purchase_rate FROM sessions`,
+  decemberFirstParameterInventory: `SELECT parameter.key,
+    COUNT(*) AS parameter_occurrences,
+    COUNTIF(parameter.value.string_value IS NOT NULL) AS string_occurrences,
+    COUNTIF(parameter.value.int_value IS NOT NULL) AS integer_occurrences,
+    COUNTIF(parameter.value.float_value IS NOT NULL) AS float_occurrences,
+    COUNTIF(parameter.value.double_value IS NOT NULL) AS double_occurrences
+    FROM ${source} CROSS JOIN UNNEST(event_params) AS parameter
+    WHERE _TABLE_SUFFIX = '20201201'
+    GROUP BY parameter.key ORDER BY parameter.key`,
   decemberCheckout: orderedCheckoutSql(sessionEventsSql("20201201", "20201231")),
 };

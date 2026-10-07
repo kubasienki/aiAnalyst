@@ -75,5 +75,8 @@ describe("BigQuery gateway", () => {
   it("does not expose raw SDK errors", () => {
     expect(sanitizeBigQueryError(new Error("secret"))).toMatchObject({ code: "execution_failed" });
     expect(sanitizeBigQueryError({ errors: [{ reason: "quotaExceeded" }] })).toMatchObject({ code: "processing_limit" });
+    const invalid = sanitizeBigQueryError({ errors: [{ reason: "invalidQuery", message: "secret project name and raw SQL" }] });
+    expect(invalid.code).toBe("invalid_query");
+    expect(invalid.message).not.toContain("secret");
   });
 });

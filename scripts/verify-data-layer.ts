@@ -42,11 +42,21 @@ async function main() {
   const groupedProducts = await run("Independent product aggregation", `WITH product_rows AS (
     SELECT item.item_id, item.item_name, item.item_revenue_in_usd AS revenue
     FROM \`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*\`, UNNEST(items) AS item
-    WHERE _TABLE_SUFFIX BETWEEN '20210101' AND '20210131' AND event_name = 'purchase')
-    SELECT item_id, item_name, SUM(revenue) AS revenue_usd FROM product_rows
-    GROUP BY item_id, item_name ORDER BY revenue_usd DESC LIMIT 10`, crosscheck);
+    WHERE _TABLE_SUFFIX BETWEEN '20210101' AND '20210131' AND event_name = 'purchase' AND item.item_id IS NOT NULL AND item.item_id NOT IN ('', '<Other>', '(not set)', '(data deleted)'))
+    SELECT item_id, MAX(item_name) AS item_name, SUM(revenue) AS revenue_usd FROM product_rows
+    GROUP BY item_id ORDER BY revenue_usd DESC, item_id LIMIT 10`, crosscheck);
   assert.deepEqual(groupedProducts.rows.map(row => [row.item_id, row.item_name, row.revenue_usd]),
     products.rows.map(row => [row.item_id, row.item_name, row.revenue_usd]));
+  const sessions = await run("Observed December sessions", REFERENCE_QUERIES.decemberSessionConversion, crosscheck);
+  assert.equal(sessions.rows[0].sessions, 133368);
+  assert.equal(sessions.rows[0].purchasing_sessions, 2116);
+  const parameters = await run("One-day event parameter discovery", REFERENCE_QUERIES.decemberFirstParameterInventory, createExecutionContext());
+  assert.equal(parameters.rows.length, 33);
+  assert.ok(parameters.rows.some(row => row.key === "ga_session_id"));
+  const funnel = await run("Observed ordered December checkout", REFERENCE_QUERIES.decemberCheckout, createExecutionContext());
+  assert.deepEqual({ ...funnel.rows[0] }, {
+    checkout_sessions: 4362, shipping_sessions: 2491, payment_sessions: 1850, purchase_sessions: 1364,
+  });
   console.log("Live data-layer verification passed.");
 }
 

@@ -38,8 +38,9 @@ describe("agent contracts", () => {
   });
 
   it("exports tool JSON schemas from the runtime schemas", () => {
-    expect(ANALYSIS_TOOL_DESCRIPTIONS.map(tool => tool.name)).toEqual(["run_sql", "request_clarification", "finish_answer"]);
-    expect(ANALYSIS_TOOL_DESCRIPTIONS[0].parameters).toMatchObject({ type: "object", additionalProperties: false, required: ["intent", "sql"] });
+    expect(ANALYSIS_TOOL_DESCRIPTIONS.map(tool => tool.name)).toEqual(["inspect_dataset", "run_sql", "request_clarification", "finish_answer"]);
+    expect(ANALYSIS_TOOL_DESCRIPTIONS[0].parameters).toMatchObject({ type: "object", additionalProperties: false, required: ["topic"] });
+    expect(ANALYSIS_TOOL_DESCRIPTIONS[1].parameters).toMatchObject({ type: "object", additionalProperties: false, required: ["intent", "sql"] });
   });
 
   it("preserves plaintext and structured reasoning without the former 16 KiB field cap", () => {

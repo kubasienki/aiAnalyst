@@ -11,6 +11,10 @@ export const runSqlArgumentsSchema = z.strictObject({
   }),
 });
 
+export const inspectDatasetArgumentsSchema = z.strictObject({
+  topic: nonemptyText.max(300).describe("Name the business topic, event tag, parameter or field whose schema is needed."),
+});
+
 export { clarificationSchema, answerSchema, analysisOutcomeSchema } from "../../shared/analysis";
 export type { AnalysisOutcome, Answer, Clarification } from "../../shared/analysis";
 
@@ -20,6 +24,11 @@ export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
 });
 
 export const ANALYSIS_TOOL_DESCRIPTIONS = [
+  {
+    name: "inspect_dataset",
+    description: "Look up known schema fields, event names/tags, parameter keys and definitions for an unfamiliar dataset topic. Static metadata only; makes no BigQuery query. The catalog is incomplete discovery guidance, never an allowlist.",
+    parameters: z.toJSONSchema(inspectDatasetArgumentsSchema, { target: "draft-07" }),
+  },
   {
     name: "run_sql",
     description: "Obtain evidence using guarded read-only BigQuery SQL. Declare intent first, then review returned SQL, scope, grain, units, rows, and completeness before using the evidence.",

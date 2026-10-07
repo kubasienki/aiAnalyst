@@ -11,7 +11,9 @@
     "bigquery:check": "tsx --conditions=react-server scripts/check-bigquery.ts",
     "test": "vitest run",
     "bigquery:verify": "tsx --conditions=react-server scripts/verify-data-layer.ts",
-    "openrouter:check": "tsx --conditions=react-server scripts/check-openrouter.ts"
+    "openrouter:check": "tsx --conditions=react-server scripts/check-openrouter.ts",
+    "analyst:check": "tsx --conditions=react-server scripts/check-analyst.ts",
+    "bigquery:verify-funnel": "tsx --conditions=react-server scripts/verify-checkout-fixtures.ts"
   },
   "engines": {
     "node": ">=22"

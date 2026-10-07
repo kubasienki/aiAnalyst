@@ -5,12 +5,14 @@ import { AgentRunnerError } from "../agent/runner-contracts";
 import { registerTool } from "../agent/tool-registration";
 import { ContextError } from "../context/contracts";
 import { projectEvidence } from "../context/evidence";
+import { jsonValueSchema } from "../contracts/json";
 import { evidenceInputSchema } from "../conversations/contracts";
-import { SEMANTIC_GUIDE, SEMANTIC_GUIDE_VERSION } from "../data/semantic-guide";
+import { SEMANTIC_GUIDE_VERSION, semanticSnapshotForQuery } from "../data/semantic-guide";
+import { describeDatasetTopic } from "../data/dataset-catalog";
 import type { QueryErrorCode, QueryExecutor } from "../data/types";
 import {
   ANALYSIS_TOOL_DESCRIPTIONS, answerSchema, clarificationSchema,
-  finishAnswerArgumentsSchema, runSqlArgumentsSchema, type AnalysisOutcome,
+  finishAnswerArgumentsSchema, inspectDatasetArgumentsSchema, runSqlArgumentsSchema, type AnalysisOutcome,
 } from "./contracts";
 import type { AnalysisEvidenceArtifact, AnalysisRunState } from "./types";
 
@@ -21,10 +23,24 @@ const deterministicQueryErrors = new Set<QueryErrorCode>([
 ]);
 
 export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[] {
-  const [sqlDescription, clarificationDescription, answerDescription] = ANALYSIS_TOOL_DESCRIPTIONS;
+  function description(name: string) {
+    const result = ANALYSIS_TOOL_DESCRIPTIONS.find(candidate => candidate.name === name);
+    if (!result) {
+      throw new Error(`Missing descriptor for ${name}.`);
+    }
+    return result;
+  }
   return [
     registerTool({
-      ...sqlDescription,
+      ...description("inspect_dataset"),
+      role: "continuing",
+      argumentsSchema: inspectDatasetArgumentsSchema,
+      async handle({ topic }): Promise<AnalysisExecution> {
+        return { kind: "continue", content: jsonValueSchema.parse(describeDatasetTopic(topic)) };
+      },
+    }),
+    registerTool({
+      ...description("run_sql"),
       role: "continuing",
       argumentsSchema: runSqlArgumentsSchema,
       isAvailable(state: AnalysisRunState) {
@@ -53,7 +69,7 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
         }
         const input = evidenceInputSchema.parse({
           evidence: result.evidence,
-          semanticGuideSnapshot: SEMANTIC_GUIDE,
+          semanticGuideSnapshot: semanticSnapshotForQuery(result.evidence.sql),
           declaredScope: { intent: argumentsValue.intent },
           assumptions: [],
         });
@@ -91,7 +107,7 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
       },
     }),
     registerTool({
-      ...clarificationDescription,
+      ...description("request_clarification"),
       role: "terminal",
       argumentsSchema: clarificationSchema,
       async handle(clarification): Promise<AnalysisExecution> {
@@ -103,7 +119,7 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
       },
     }),
     registerTool({
-      ...answerDescription,
+      ...description("finish_answer"),
       role: "terminal",
       argumentsSchema: finishAnswerArgumentsSchema,
       async handle(argumentsValue, invocation): Promise<AnalysisExecution> {
