@@ -19,6 +19,11 @@ export type ChatState = {
   cancelling: boolean;
 };
 
+type SnapshotRead = {
+  snapshot: ConversationSnapshot;
+  replacedMissingConversation: boolean;
+};
+
 type ChatControllerDependencies = {
   api: ChatApi;
   storage: ChatStorage;
@@ -199,11 +204,35 @@ export class ChatController {
     await this.sync();
   }
 
-  private async loadOrCreateSnapshot(signal: AbortSignal): Promise<ConversationSnapshot> {
-    if (this.conversationId) {
-      return this.dependencies.api.load(this.conversationId, signal);
+  private async loadOrCreateSnapshot(signal: AbortSignal): Promise<SnapshotRead> {
+    if (!this.conversationId) {
+      const snapshot = await this.dependencies.api.create(signal);
+      return { snapshot, replacedMissingConversation: false };
     }
-    return this.dependencies.api.create(signal);
+    try {
+      const snapshot = await this.dependencies.api.load(this.conversationId, signal);
+      return { snapshot, replacedMissingConversation: false };
+    } catch (error) {
+      const restoredIdentityIsMissing = error instanceof ChatRequestError
+        && error.status === 404
+        && this.state.snapshot === null
+        && !signal.aborted;
+      if (!restoredIdentityIsMissing) {
+        throw error;
+      }
+      // A remembered identity can outlive the server database, e.g. after a
+      // redeploy that reset storage. Nothing from it is on screen yet, so
+      // retrying the permanent 404 would only leave the chat stuck.
+      this.forgetMissingConversation();
+      const snapshot = await this.dependencies.api.create(signal);
+      return { snapshot, replacedMissingConversation: true };
+    }
+  }
+
+  // Pending message text already lives in the draft, so only identities are dropped.
+  private forgetMissingConversation(): void {
+    this.conversationId = null;
+    this.clearPending();
   }
 
   private rememberConversationIdentity(conversationId: string): void {
@@ -242,13 +271,15 @@ export class ChatController {
     this.activeSnapshotController = controller;
     const completion = (async () => {
       try {
-        const snapshot = await this.loadOrCreateSnapshot(controller.signal);
+        const { snapshot, replacedMissingConversation } = await this.loadOrCreateSnapshot(controller.signal);
         if (!this.isCurrent(generation) || this.activeSnapshotController !== controller) {
           return;
         }
         this.conversationUnavailable = false;
         this.rememberConversationIdentity(snapshot.conversationId);
-        if (this.state.phase === "reconnecting" || this.state.phase === "loading") {
+        if (replacedMissingConversation) {
+          this.update({ error: "Your previous conversation is no longer available on the server. A new conversation was started." });
+        } else if (this.state.phase === "reconnecting" || this.state.phase === "loading") {
           this.update({ error: null });
         }
         this.applySnapshot(snapshot);

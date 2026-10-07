@@ -126,6 +126,29 @@ describe("browser conversation synchronization", () => {
     expect(f.api.submit).toHaveBeenCalledWith(operation, expect.any(AbortSignal), expect.any(Function));
   });
 
+  it("starts a new conversation when the remembered one no longer exists on the server", async () => {
+    const missing = empty();
+    const f = fixture(missing, pendingMessage(missing));
+    vi.mocked(f.api.load).mockRejectedValueOnce(new ChatRequestError(404, { code: "not_found", message: "Conversation or attempt not found." }));
+    await f.controller.initialize();
+    const state = f.controller.getSnapshot();
+    expect(f.api.create).toHaveBeenCalledOnce();
+    expect(state.snapshot?.conversationId).not.toBe(missing.conversationId);
+    expect(state).toMatchObject({ phase: "ready", draft: "Revenue?", recovery: null, error: expect.stringContaining("no longer available") });
+    expect(f.storage.saveActiveId).toHaveBeenCalledWith(state.snapshot?.conversationId);
+    expect(f.storedPending()).toBeNull();
+  });
+
+  it("keeps a displayed conversation on screen when it later becomes missing", async () => {
+    const f = fixture();
+    await f.controller.initialize();
+    const shown = f.controller.getSnapshot().snapshot;
+    vi.mocked(f.api.load).mockRejectedValueOnce(new ChatRequestError(404, { code: "not_found", message: "Conversation or attempt not found." }));
+    await f.controller.sync();
+    expect(f.api.create).not.toHaveBeenCalled();
+    expect(f.controller.getSnapshot()).toMatchObject({ phase: "reconnecting", snapshot: shown, error: expect.stringContaining("unavailable") });
+  });
+
   it("recovers a saved answer after a lost response without running another analysis", async () => {
     const snapshot = empty();
     const operation = pendingMessage(snapshot);
