@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { clarificationSchema, answerSchema } from "../../shared/analysis";
+import { answerChartsSchema } from "../../shared/charts";
 
 const nonemptyText = z.string().trim().min(1);
 
@@ -20,6 +21,7 @@ export type { AnalysisOutcome, Answer, Clarification } from "../../shared/analys
 
 // Basis belongs to the tool invocation, keeping stored Answer outcomes compatible.
 export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
+  charts: answerChartsSchema.describe("Optional visual support for the narrative. Supply [] for text-only answers. Reference saved evidence and columns; never copy values or write rendering code."),
   basis: z.enum(["data", "explanation"]).describe("Use data for any finding about this dataset. Explanation is only for conceptual guidance without empirical claims."),
 });
 
@@ -41,7 +43,7 @@ export const ANALYSIS_TOOL_DESCRIPTIONS = [
   },
   {
     name: "finish_answer",
-    description: "Finish with a supported narrative, assumptions, limitations, and evidence references. Ends this run.",
+    description: "Finish with a supported narrative, assumptions, limitations, evidence references, and charts when they add insight. Chart specifications reference existing evidence columns, never copied data. Ends this run.",
     parameters: z.toJSONSchema(finishAnswerArgumentsSchema, { target: "draft-07" }),
   },
 ];

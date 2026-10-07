@@ -1,7 +1,8 @@
 import "server-only";
-import { conversationRevision, conversationSnapshotSchema, type ConversationSnapshot } from "../../shared/conversations";
+import { conversationRevision, conversationSnapshotSchema, type ConversationSnapshot, type DisplayAttempt } from "../../shared/conversations";
 import type { ConversationRun, RunOutcome } from "./contracts";
 import type { ConversationHistory } from "./repository";
+import { projectAnswerCharts } from "../charts/display";
 
 const failureMessages = {
   configuration: "Analysis is not configured. Please try again after configuration is restored.",
@@ -28,7 +29,31 @@ export function safeOutcome(outcome: RunOutcome | null): RunOutcome | null {
   };
 }
 
-export function projectConversation(history: ConversationHistory): ConversationSnapshot {
+export function projectConversation(
+  history: ConversationHistory,
+  reportFailure?: (diagnostic: { category: string; runId: string }) => void,
+): ConversationSnapshot {
+  const evidence = new Map(history.evidence
+    .filter(record => record.conversationId === history.conversation.id)
+    .map(record => [record.evidence.resultId, record.evidence]));
+  function projectAttempt(run: ConversationRun): DisplayAttempt {
+    const attempt: DisplayAttempt = {
+      id: run.id,
+      clientMessageId: run.clientMessageId,
+      retryOfRunId: run.retryOfRunId,
+      status: run.status,
+      deadline: run.deadline,
+      outcome: safeOutcome(run.outcome),
+    };
+    if (run.outcome?.kind === "answer" && run.outcome.answer.charts?.length) {
+      attempt.renderedCharts = projectAnswerCharts(
+        run.outcome.answer,
+        id => evidence.get(id),
+        category => reportFailure?.({ category, runId: run.id }),
+      );
+    }
+    return attempt;
+  }
   const firstSequence = new Map<string, number>();
   for (const event of history.events) {
     if (!firstSequence.has(event.runId)) {
@@ -49,14 +74,7 @@ export function projectConversation(history: ConversationHistory): ConversationS
       id: event.id,
       content: event.payload.content,
       sequence: event.sequence,
-      attempts: attempts.map(run => ({
-        id: run.id,
-        clientMessageId: run.clientMessageId,
-        retryOfRunId: run.retryOfRunId,
-        status: run.status,
-        deadline: run.deadline,
-        outcome: safeOutcome(run.outcome),
-      })),
+      attempts: attempts.map(projectAttempt),
     });
   }
   return conversationSnapshotSchema.parse({

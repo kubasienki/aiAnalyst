@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { analysisOutcomeSchema } from "./analysis";
 import { MAX_USER_MESSAGE_LENGTH } from "./chat";
+import { chartDisplayResultSchema, MAX_ANSWER_CHARTS } from "./charts";
 
 export const revisionSchema = z.string().regex(/^v1:\d+:\d+$/);
 export const messageSubmissionSchema = z.strictObject({
@@ -26,6 +27,8 @@ export const attemptSchema = z.strictObject({
   status: z.enum(["running", "completed", "waiting_for_user", "failed", "cancelled", "interrupted"]),
   deadline: z.number().int().nonnegative().safe(),
   outcome: displayOutcomeSchema.nullable(),
+  // Display-only data is derived from evidence, never persisted or replayed.
+  renderedCharts: z.array(chartDisplayResultSchema).max(MAX_ANSWER_CHARTS).optional(),
 }).superRefine((attempt, context) => {
   let expectedStatus = "running";
   if (attempt.outcome?.kind === "answer") {

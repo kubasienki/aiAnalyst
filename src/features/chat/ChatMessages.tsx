@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type { ConversationSnapshot, DisplayAttempt } from "../../shared/conversations";
 import styles from "./chat.module.css";
+import { AnswerChart } from "../charts/AnswerChart";
 
 type Props = {
   snapshot: ConversationSnapshot;
@@ -21,7 +22,7 @@ function AttemptOutcome({ attempt, choicesEnabled, onChoice }: {
     return <p className={styles.storageError}>{outcome.error.message}</p>;
   }
   return (
-    <article className={`${styles.message} ${styles.assistantMessage}`}>
+    <article className={`${styles.message} ${styles.assistantMessage} ${attempt.renderedCharts?.length ? styles.chartAnswer : ""}`}>
       <p className={styles.messageAuthor}>Analyst</p>
       {outcome.kind === "clarification" ? (
         <>
@@ -38,6 +39,7 @@ function AttemptOutcome({ attempt, choicesEnabled, onChoice }: {
         <>
           {outcome.answer.completeness === "partial" && <p className={styles.messageAuthor}>Partial answer</p>}
           <p className={styles.messageContent}>{outcome.answer.narrative}</p>
+          {attempt.renderedCharts?.map((chart, index) => <AnswerChart key={index} chart={chart} />)}
           {outcome.answer.assumptions.length > 0 && (
             <div className={styles.answerDetails}>
               <p>Assumptions</p>

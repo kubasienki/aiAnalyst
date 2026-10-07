@@ -71,7 +71,7 @@ export function createConversationService(dependencies: Dependencies) {
 
   async function load(conversationId: string): Promise<ConversationSnapshot> {
     await reconcile();
-    return projectConversation(await repository.loadHistory(conversationId));
+    return projectConversation(await repository.loadHistory(conversationId), dependencies.reportFailure);
   }
 
   async function execute(
@@ -186,7 +186,7 @@ export function createConversationService(dependencies: Dependencies) {
           }
         }
       }
-      const snapshot = projectConversation(await repository.loadHistory(admittedRun.conversationId));
+      const snapshot = projectConversation(await repository.loadHistory(admittedRun.conversationId), dependencies.reportFailure);
       const attempt = snapshot.turns.flatMap(turn => turn.attempts).find(item => item.id === runId);
       if (!attempt?.outcome) {
         throw new ConversationServiceError("synchronization_failed", "The analysis outcome could not be confirmed. Check status.");
@@ -238,7 +238,7 @@ export function createConversationService(dependencies: Dependencies) {
     // with no owner; execute can still settle it using the recorded identity.
     let snapshot: ConversationSnapshot;
     try {
-      snapshot = projectConversation(await repository.loadHistory(conversationId));
+      snapshot = projectConversation(await repository.loadHistory(conversationId), dependencies.reportFailure);
     } catch (error) {
       if (result.created) {
         await repository.finishRun(result.run.id, { outcome: failedOutcome(error) });
@@ -255,7 +255,7 @@ export function createConversationService(dependencies: Dependencies) {
   return {
     async create(): Promise<ConversationSnapshot> {
       const conversation = await repository.createConversation();
-      return projectConversation(await repository.loadHistory(conversation.id));
+      return projectConversation(await repository.loadHistory(conversation.id), dependencies.reportFailure);
     },
     load,
     submitMessage(conversationId: string, input: unknown) {

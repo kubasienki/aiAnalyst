@@ -93,8 +93,12 @@ streams are not cached. The old browser-authoritative /api/chat path is removed.
 Snapshots contain conversation identity, revision, ordered user messages, attempts
 with submission/retry identity and lifecycle, and validated terminal outcomes.
 Only final answer narratives and clarification questions become analyst messages.
-Provider replay, intermediate text, context notes, SQL, rows, arguments, and internal
-diagnostics never enter the projection. Retries stay attached to one question.
+Provider replay, intermediate text, context notes, SQL, raw evidence payloads,
+arguments, and internal diagnostics never enter the projection. Answers may also
+contain chart specifications; display attempts attach selected chart columns and
+rows as `renderedCharts`. This display-only data is derived from saved evidence
+and excluded from persistence and model replay. See [answer charts](answer-charts.md)
+for validation, limits, rendering and failure behavior. Retries stay attached to one question.
 
 New execution emits `accepted` with a persisted snapshot, coarse `progress`
 (`thinking` or `querying`), then one `answer`, `clarification`, or `error` event while
@@ -183,7 +187,7 @@ SSE, revision ordering, offline/reload, pending operations, and stale responses.
 Run tests, lint, typecheck, and production build. Exercise a browser flow when a
 browser harness is available; live analytical evaluation belongs to analysis delivery.
 
-Local single-instance Node with SQLite, no accounts, migrations, charts, token
+Local single-instance Node with SQLite, no accounts, migrations, token
 streaming, compaction, history browser, or background execution. Tools/prompts are
 an explicit dependency, composed through createAnalysisService from the parallel
 analytical delivery. There is no text-only fallback or fabricated analyst.

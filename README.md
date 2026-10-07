@@ -92,17 +92,18 @@ Run `npm run bigquery:verify` after configuring credentials. It executes four re
 src/
   app/                 Page shell, layout, styles, conversation and run API routes
   features/chat/       Chat components, useChat state hook, browser storage
+  features/charts/     Recharts rendering, formatting, tooltips and data tables
   server/
-    chat/              Conversation workflow and HTTP projection
     analysis/          Analyst tool argument schemas and outcomes
     agent/             Model/tool contracts, registration, bounded attempt runner
-    conversations/     Conversation/run/event contracts and repository interface
+    charts/            Evidence validation and selected chart data projection
+    conversations/     Conversation workflow, display projection and repository interface
     context/           History reconstruction, context selection, projection, budgets
     contracts/         Shared server JSON value contract
     data/              Query service, SQL policy, semantic guide, execution context
     adapters/          OpenRouter, BigQuery, and SQLite persistence adapters
     config/            Server configuration and dependency composition
-  shared/              Browser-safe conversation and analytical outcome contracts
+  shared/              Browser-safe conversation, answer and chart contracts
 scripts/               BigQuery and OpenRouter live connection checks
 ```
 
@@ -110,7 +111,7 @@ scripts/               BigQuery and OpenRouter live connection checks
 
 The conversation application service owns submission admission, run lifecycle, checkpoints, and safe display projection. `createAnalysisService()` owns the analytical tool state and receives reconstructed context. The bounded runner owns model/action iteration; adapters own OpenRouter, BigQuery, and SQLite details. Routes map application outcomes to HTTP and SSE without carrying workflow rules. See the implementation decision record for synchronization, retry, and failure details.
 
-Conversation routes are Node-only and open repositories explicitly per request. They close connections after the stream and execution settle. Configuration loads on demand, so builds need no provider credentials. Browser projections exclude assistant tool calls, reasoning, context notes, SQL, and query rows.
+Conversation routes are Node-only and open repositories explicitly per request. They close connections after the stream and execution settle. Configuration loads on demand, so builds need no provider credentials. Browser projections exclude assistant tool calls, reasoning, context notes, SQL, and raw query payloads. Accepted charts expose only their selected columns and values.
 
 ## Conversation persistence and execution
 
@@ -122,7 +123,7 @@ SQLite uses Drizzle and better-sqlite3 with foreign keys, WAL, and a five-second
 
 Repository operations atomically begin submissions, enforce one active run per conversation, record tool results with referenced evidence, and finalize outcomes. Reusing a client submission ID returns its original run only when input matches. Explicit retries link to a failed/cancelled/interrupted run and reuse the original user-message event. Terminal-tool acknowledgments and outcomes are saved together; unfinished calls remain in failed/interrupted history for later context handling. Expiry reconciliation is explicit and never resumes tool execution.
 
-Stored JSON is validated at write/read boundaries. While an assistant tool batch is pending, only its unresolved results or failure finalization may follow; assistant messages and context notes are rejected atomically. Query rows are stored once in evidence records, preserving numeric strings, nulls, and truncation metadata; events contain references rather than copies. Scope and assumptions attached to evidence are analyst declarations, not proof that SQL implements those definitions. The context builder reconstructs valid model messages and checks which complete requests fit; context compaction and charts are deferred.
+Stored JSON is validated at write/read boundaries. While an assistant tool batch is pending, only its unresolved results or failure finalization may follow; assistant messages and context notes are rejected atomically. Query rows are stored once in evidence records, preserving numeric strings, nulls, and truncation metadata; events contain references rather than copies. Scope and assumptions attached to evidence are analyst declarations, not proof that SQL implements those definitions. The context builder reconstructs valid model messages and checks which complete requests fit; context compaction is deferred. [Answer charts](docs/answer-charts.md) reference saved evidence, validate before acceptance, and render selected columns through Recharts without copying values through the model.
 
 The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The tool-capable OpenRouter adapter captures and replays it, mapping `reasoning_details` without truncating blocks. The conversation display projection excludes reasoning. The runner preserves it internally; diagnostics exclude reasoning and conversation contents. Runner diagnostics exclude reasoning and conversation contents.
 

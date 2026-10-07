@@ -55,7 +55,7 @@ function action(name: string, args: unknown): ModelResponse {
 }
 
 function answer(evidenceIds: string[] = [], overrides = {}) {
-  return { basis: "data", narrative: "Revenue was $160,555 in December 2020.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", ...overrides };
+  return { basis: "data", narrative: "Revenue was $160,555 in December 2020.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", charts: [], ...overrides };
 }
 
 function runInput(overrides: Partial<AnalysisRunInput> = {}): AnalysisRunInput {
@@ -192,6 +192,22 @@ describe("analytical tools", () => {
     expect(await finish.execute(answer([input.evidence.resultId]), invocation)).toMatchObject({ kind: "error", error: { code: "incomplete_evidence" } });
     expect(await finish.execute(answer([input.evidence.resultId], { completeness: "partial", limitations: ["Service returned only a prefix of rows."] }), invocation))
       .toMatchObject({ kind: "terminal", outcome: { answer: { completeness: "partial" } } });
+  });
+
+  it("rejects an invalid chart before terminal acceptance and accepts a text repair", async () => {
+    const input = savedEvidence();
+    const invocation = toolInvocation(new Map([[input.evidence.resultId, input]]));
+    const finish = tool("finish_answer");
+    const invalidChart = {
+      type: "bar", evidenceId: input.evidence.resultId, title: "Revenue", caption: "Revenue by category.",
+      x: { column: "missing_category", label: "Category" },
+      series: [{ column: "revenue_usd", label: "Revenue", format: { kind: "currency", currency: "USD" } }],
+    };
+    expect(await finish.execute(answer([input.evidence.resultId], { charts: [invalidChart] }), invocation))
+      .toMatchObject({ kind: "error", error: { code: "invalid_chart", details: { chartIndex: 0 } }, repeatPolicy: "unchanged_arguments" });
+    expect(await finish.execute(answer([input.evidence.resultId]), invocation)).toMatchObject({ kind: "terminal" });
+    expect(await finish.execute({ ...answer([input.evidence.resultId]), charts: undefined }, invocation))
+      .toMatchObject({ kind: "error", error: { code: "invalid_arguments" } });
   });
 });
 

@@ -44,7 +44,7 @@ function action(name: string, argumentsValue: unknown): ModelResponse {
 function answer(evidenceIds: string[] = []) {
   return {
     basis: evidenceIds.length > 0 ? "data" : "explanation",
-    narrative: "A supported answer.", assumptions: [], limitations: [], evidenceIds, completeness: "complete",
+    narrative: "A supported answer.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", charts: [],
   };
 }
 
@@ -57,7 +57,17 @@ function prepared(model: AgentModel): PreparedConversationExecution {
       async submit() {
         return {
           id: "test-job",
-          async readPage() { return { complete: true, columns: [{ name: "revenue_usd", type: "FLOAT" }], rows: [{ revenue_usd: 12.5 }] }; },
+          async readPage() {
+            return {
+              complete: true,
+              columns: [
+                { name: "category", type: "STRING" },
+                { name: "revenue_usd", type: "FLOAT" },
+                { name: "private_column", type: "STRING" },
+              ],
+              rows: [{ category: "Mobile", revenue_usd: 12.5, private_column: "unselected value" }],
+            };
+          },
           async statistics() { return { bytesProcessed: "100", bytesBilled: "100", cacheHit: false }; },
           async cancel() {},
         };
@@ -151,6 +161,57 @@ describe("conversation application workflow", () => {
     const call = f.model.complete.mock.calls.at(-1)?.[0];
     expect(JSON.stringify(call?.messages)).toContain(history.evidence[0].evidence.resultId);
     expect(JSON.stringify(await service.load(snapshot.conversationId))).not.toContain("test-job");
+  });
+
+  it("projects charts consistently after terminal commit, reload, duplicate submission and follow-up", async () => {
+    const f = await fixture(async request => {
+      if (request.messages.at(-1)?.role === "user" && request.messages.at(-1)?.content === "Revenue?") {
+        return action("run_sql", { intent: "Revenue by category in USD", sql: REFERENCE_QUERIES.decemberRevenue });
+      }
+      const evidenceIds = request.messages.flatMap(message => {
+        if (message.role !== "tool" || message.content === null || typeof message.content !== "object" || Array.isArray(message.content)) {
+          return [];
+        }
+        const evidence = message.content.evidence;
+        if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || typeof evidence.resultId !== "string") {
+          return [];
+        }
+        return [evidence.resultId];
+      });
+      expect(JSON.stringify(request.messages)).not.toContain("renderedCharts");
+      const charts = [{
+        type: "bar", evidenceId: evidenceIds[0], title: "Revenue by category", caption: "Mobile revenue in the sample period.",
+        x: { column: "category", label: "Category" },
+        series: [{ column: "revenue_usd", label: "Revenue", format: { kind: "currency", currency: "USD" } }],
+      }];
+      return action("finish_answer", { ...answer(evidenceIds), charts });
+    });
+    const admitted = await f.service.submitMessage(f.initial.conversationId, f.input);
+    const events = await execute(admitted);
+    const terminal = events.at(-1);
+    if (!terminal || terminal.kind !== "answer") throw new Error("Expected an accepted answer");
+    const snapshot = terminal.snapshot;
+    expect(snapshot.turns[0].attempts[0].renderedCharts?.[0]).toMatchObject({
+      kind: "ready", rows: [{ category: "Mobile", revenue_usd: 12.5 }],
+    });
+    const encoded = JSON.stringify(snapshot);
+    expect(encoded).not.toContain("unselected value");
+    expect(encoded).not.toContain("private_column");
+    expect(encoded).not.toContain("SELECT");
+    const history = await f.repository.loadHistory(snapshot.conversationId);
+    expect(JSON.stringify(history.runs[0].outcome)).not.toContain("renderedCharts");
+    expect(JSON.stringify(history.events)).not.toContain('"kind":"ready"');
+    expect(history.evidence[0].evidence.rows[0].private_column).toBe("unselected value");
+
+    f.repository.close();
+    const service = f.serviceFor(f.open());
+    expect(await service.load(snapshot.conversationId)).toEqual(snapshot);
+    expect((await service.submitMessage(snapshot.conversationId, f.input)).snapshot).toEqual(snapshot);
+    const followUp = await service.submitMessage(snapshot.conversationId, {
+      message: "Explain that comparison", clientMessageId: randomUUID(), expectedRevision: snapshot.revision,
+    });
+    expect((await execute(followUp)).at(-1)?.kind).toBe("answer");
+    expect(JSON.stringify(f.model.complete.mock.calls.at(-1)?.[0].messages)).not.toContain("renderedCharts");
   });
 
   it("ends clarification and reconstructs its question and choices for the next message", async () => {

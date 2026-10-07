@@ -4,6 +4,7 @@ import type { RecoverableToolError, RegisteredTool, ToolExecution } from "../age
 import { AgentRunnerError } from "../agent/runner-contracts";
 import { registerTool } from "../agent/tool-registration";
 import { ContextError } from "../context/contracts";
+import { prepareAnswerCharts } from "../charts/prepare";
 import { projectEvidence } from "../context/evidence";
 import { jsonValueSchema } from "../contracts/json";
 import { evidenceInputSchema } from "../conversations/contracts";
@@ -135,6 +136,22 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
         const referencesTruncation = answer.evidenceIds.some(id => evidence.get(id)?.evidence.truncated);
         if (referencesTruncation && (answer.completeness !== "partial" || answer.limitations.length === 0)) {
           return { kind: "error", error: { code: "incomplete_evidence", message: "Referenced service-truncated results require partial completeness and an explicit truncation limitation." } };
+        }
+        const chartResult = prepareAnswerCharts(
+          answer.charts ?? [],
+          answer.evidenceIds,
+          id => evidence.get(id)?.evidence,
+        );
+        if (!chartResult.ok) {
+          return {
+            kind: "error",
+            error: {
+              code: chartResult.error.code,
+              message: chartResult.error.message,
+              details: { chartIndex: chartResult.error.chartIndex },
+            },
+            repeatPolicy: "unchanged_arguments",
+          };
         }
         return {
           kind: "terminal",

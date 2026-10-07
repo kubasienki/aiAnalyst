@@ -120,6 +120,12 @@
   border: 1px solid #e2e6ed;
 }
 
+.chartAnswer {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .messageAuthor {
   font-size: 12px;
   font-weight: 700;
