@@ -20,6 +20,8 @@ export function createAnalyst() {
     runAgent: createAgentRunner({
       model: createAgentModel(),
       preflight: createAgentPreflight(request => measureContextRequest(request, measurer, budget)),
+      // Carries the boundary and category the runner suppressed from the caller.
+      reportFailure: diagnostic => console.error("Agent execution failed", diagnostic),
     }),
   });
 }

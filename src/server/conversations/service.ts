@@ -3,7 +3,7 @@ import type { AgentResult } from "../agent/runner-contracts";
 import type { ToolDescription } from "../agent/contracts";
 import { DEFAULT_AGENT_LIMITS } from "../agent/runner";
 import type { AnalysisOutcome } from "../analysis/contracts";
-import { ContextError, type BuildContextInput, type BuiltContext } from "../context/contracts";
+import { ContextError, contextFailureCode, type BuildContextInput, type BuiltContext } from "../context/contracts";
 import { ModelError } from "../agent/errors";
 import {
   messageSubmissionSchema, retrySubmissionSchema,
@@ -51,11 +51,7 @@ export type AdmittedSubmission = {
 function failedOutcome(error: unknown): Extract<RunOutcome, { kind: "failure" }> {
   let code: Extract<RunOutcome, { kind: "failure" }>["error"]["code"] = "internal";
   if (error instanceof ContextError) {
-    if (error.code === "configuration" || error.code === "context_limit") {
-      code = error.code;
-    } else {
-      code = "protocol";
-    }
+    code = contextFailureCode(error);
   } else if (error instanceof ConversationRepositoryError) {
     code = "persistence";
   }

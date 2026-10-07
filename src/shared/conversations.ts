@@ -20,25 +20,36 @@ export const failureOutcomeSchema = z.strictObject({
   error: z.strictObject({ code: failureCodeSchema, message: z.string().min(1).max(2_000) }),
 });
 export const displayOutcomeSchema = z.union([analysisOutcomeSchema, failureOutcomeSchema]);
+export const runStatusSchema = z.enum([
+  "running", "completed", "waiting_for_user", "failed", "cancelled", "interrupted",
+]);
+
+// The status an attempt must carry for a given outcome. Persistence and display
+// both enforce this, so it is defined once here rather than in each validator.
+export function outcomeStatus(outcome: z.infer<typeof displayOutcomeSchema> | null): z.infer<typeof runStatusSchema> {
+  if (outcome === null) {
+    return "running";
+  }
+  if (outcome.kind === "answer") {
+    return "completed";
+  }
+  if (outcome.kind === "clarification") {
+    return "waiting_for_user";
+  }
+  return outcome.status;
+}
+
 export const attemptSchema = z.strictObject({
   id: z.uuid(),
   clientMessageId: z.uuid(),
   retryOfRunId: z.uuid().nullable(),
-  status: z.enum(["running", "completed", "waiting_for_user", "failed", "cancelled", "interrupted"]),
+  status: runStatusSchema,
   deadline: z.number().int().nonnegative().safe(),
   outcome: displayOutcomeSchema.nullable(),
   // Display-only data is derived from evidence, never persisted or replayed.
   renderedCharts: z.array(chartDisplayResultSchema).max(MAX_ANSWER_CHARTS).optional(),
 }).superRefine((attempt, context) => {
-  let expectedStatus = "running";
-  if (attempt.outcome?.kind === "answer") {
-    expectedStatus = "completed";
-  } else if (attempt.outcome?.kind === "clarification") {
-    expectedStatus = "waiting_for_user";
-  } else if (attempt.outcome?.kind === "failure") {
-    expectedStatus = attempt.outcome.status;
-  }
-  if (attempt.status !== expectedStatus) {
+  if (attempt.status !== outcomeStatus(attempt.outcome)) {
     context.addIssue({ code: "custom", message: "Attempt status does not match its outcome." });
   }
 });

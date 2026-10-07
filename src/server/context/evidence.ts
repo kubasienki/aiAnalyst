@@ -1,6 +1,6 @@
 import "server-only";
 import { jsonValueSchema, type JsonValue } from "../contracts/json";
-import { evidenceInputSchema, type EvidenceInput } from "../conversations/contracts";
+import { evidenceInputSchema, type EvidenceInput } from "../evidence/contracts";
 import { ContextError } from "./contracts";
 import { recoverableToolErrorSchema } from "../agent/contracts";
 

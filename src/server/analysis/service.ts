@@ -1,7 +1,8 @@
 import "server-only";
 import { ContextError } from "../context/contracts";
 import { projectEvidence } from "../context/evidence";
-import { identitySchema, storedEvidenceSchema, type EvidenceInput } from "../conversations/contracts";
+import { identitySchema } from "../contracts/identity";
+import { storedEvidenceSchema, type EvidenceInput } from "../evidence/contracts";
 import { createExecutionContext } from "../data/execution-context";
 import type { QueryExecutor } from "../data/types";
 import { createAnalysisTools } from "./tools";

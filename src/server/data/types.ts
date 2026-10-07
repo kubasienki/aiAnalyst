@@ -1,6 +1,11 @@
 export type { JsonValue } from "../contracts/json";
 import type { JsonValue } from "../contracts/json";
 
+// Result caps the query service enforces and persistence revalidates. Defined
+// once here so a stored result can never exceed what the service can produce.
+export const MAX_RESULT_ROWS = 200;
+export const MAX_RESULT_PAYLOAD_BYTES = 256 * 1024;
+
 export type QueryColumn = {
   name: string;
   type: string;

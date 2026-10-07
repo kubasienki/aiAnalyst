@@ -1,9 +1,9 @@
 import "server-only";
 import { z } from "zod";
 import { apiErrorSchema, chatStreamEventSchema, type ApiError, type ChatStreamEvent } from "../../shared/conversations";
-import { openConversationApplication } from "../config/conversations";
-import { ConversationRepositoryError } from "./repository";
-import { ConversationServiceError, type AdmittedSubmission, type ConversationService } from "./service";
+import { openConversationApplication } from "./conversations";
+import { ConversationRepositoryError } from "../conversations/repository";
+import { ConversationServiceError, type AdmittedSubmission, type ConversationService } from "../conversations/service";
 
 const noCacheHeaders = { "Cache-Control": "no-store" };
 

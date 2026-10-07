@@ -6,12 +6,12 @@ import { registerTool } from "../agent/tool-registration";
 import { prepareAnswerCharts } from "../charts/prepare";
 import { projectEvidence } from "../context/evidence";
 import { jsonValueSchema } from "../contracts/json";
-import { evidenceInputSchema } from "../conversations/contracts";
+import { evidenceInputSchema } from "../evidence/contracts";
 import { SEMANTIC_GUIDE_VERSION, semanticSnapshotForQuery } from "../data/semantic-guide";
 import { describeDatasetTopic } from "../data/dataset-catalog";
 import type { QueryErrorCode, QueryExecutor } from "../data/types";
 import {
-  ANALYSIS_TOOL_DESCRIPTIONS, answerSchema, clarificationSchema,
+  ANALYSIS_TOOL_SPECS, answerSchema, clarificationSchema,
   finishAnswerArgumentsSchema, inspectDatasetArgumentsSchema, runSqlArgumentsSchema, type AnalysisOutcome,
 } from "./contracts";
 import type { AnalysisEvidenceArtifact, AnalysisRunState } from "./types";
@@ -24,12 +24,14 @@ const deterministicQueryErrors = new Set<QueryErrorCode>([
 ]);
 
 export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[] {
-  function description(name: string) {
-    const result = ANALYSIS_TOOL_DESCRIPTIONS.find(candidate => candidate.name === name);
-    if (!result) {
+  // Supplies only the advertised name and description. registerTool derives the
+  // schema from the argumentsSchema below, so no JSON Schema is passed here.
+  function description(name: (typeof ANALYSIS_TOOL_SPECS)[number]["name"]) {
+    const spec = ANALYSIS_TOOL_SPECS.find(candidate => candidate.name === name);
+    if (!spec) {
       throw new Error(`Missing descriptor for ${name}.`);
     }
-    return result;
+    return { name: spec.name, description: spec.description };
   }
   return [
     registerTool({

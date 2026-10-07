@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { withConversationApplication } from "../../../../server/conversations/http";
+import { withConversationApplication } from "../../../../server/config/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

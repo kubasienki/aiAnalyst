@@ -5,6 +5,7 @@ import { DataQueryError } from "./errors";
 import { checkExecution, withinDeadline } from "./execution-context";
 import { SEMANTIC_GUIDE_VERSION } from "./semantic-guide";
 import { validateSql } from "./sql-policy";
+import { MAX_RESULT_PAYLOAD_BYTES, MAX_RESULT_ROWS } from "./types";
 import type {
   BigQueryGateway,
   DataQueryJob,
@@ -15,9 +16,7 @@ import type {
   QueryErrorCode,
 } from "./types";
 
-const MAX_ROWS = 200;
 const PAGE_SIZE = 25;
-const MAX_PAYLOAD_BYTES = 256 * 1024;
 
 export type QueryPhase = "validation" | "dry_run" | "submission" | "results" | "statistics" | "cleanup";
 export type QueryDiagnostic = {
@@ -60,7 +59,7 @@ async function collectResults(
     const page = await withinDeadline(job.readPage({
       pageToken,
       // Fetch one extra row to distinguish a complete result from truncation.
-      maxRows: Math.min(PAGE_SIZE, MAX_ROWS + 1 - rows.length),
+      maxRows: Math.min(PAGE_SIZE, MAX_RESULT_ROWS + 1 - rows.length),
       timeoutMs: Math.max(1, context.deadline - Date.now()),
     }), context);
     checkExecution(context);
@@ -78,7 +77,7 @@ async function collectResults(
     }
 
     for (const row of page.rows) {
-      if (rows.length === MAX_ROWS) {
+      if (rows.length === MAX_RESULT_ROWS) {
         truncationReason = "row_limit";
         break;
       }
@@ -160,7 +159,7 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
       context.budget.attemptsUsed++;
       const sql = validateSql(request?.sql);
       const byteLimit = Math.min(
-        MAX_PAYLOAD_BYTES,
+        MAX_RESULT_PAYLOAD_BYTES,
         context.budget.maxResultBytes - context.budget.resultBytesUsed,
       );
       if (byteLimit <= 0) {

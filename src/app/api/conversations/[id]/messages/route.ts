@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { messageSubmissionSchema } from "../../../../../shared/conversations";
-import { handleSubmission } from "../../../../../server/conversations/http";
+import { handleSubmission } from "../../../../../server/config/http";
 
 export const runtime = "nodejs";
 

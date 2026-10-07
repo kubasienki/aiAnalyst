@@ -2,7 +2,7 @@ import "server-only";
 import type { AgentCheckpoint, AgentResult, AgentRunInput } from "../agent/runner-contracts";
 import type { ModelCallTrace, ToolCallTrace } from "../agent/contracts";
 import type { BuiltContext } from "../context/contracts";
-import type { EvidenceInput, StoredEvidence } from "../conversations/contracts";
+import type { EvidenceInput, StoredEvidence } from "../evidence/contracts";
 import type { ExecutionContext } from "../data/types";
 import type { AnalysisOutcome } from "./contracts";
 

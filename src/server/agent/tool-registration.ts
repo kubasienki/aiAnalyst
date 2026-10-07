@@ -1,15 +1,24 @@
 import "server-only";
 import { z } from "zod";
-import type { RegisteredTool, ToolDefinition } from "./contracts";
+import type { RegisteredTool, ToolDefinition, ToolDescription } from "./contracts";
+
+// The only place a tool's advertised schema is derived. Callers that must
+// advertise tools before they can be constructed project them through here, so
+// the registered tool and the advertised description cannot disagree.
+export function describeTool(
+  name: string,
+  description: string,
+  argumentsSchema: z.ZodType<unknown>,
+): ToolDescription {
+  return { name, description, parameters: z.toJSONSchema(argumentsSchema, { target: "draft-07" }) };
+}
 
 export function registerTool<TArguments, TContext, TOutcome, TArtifact = never>(
   definition: ToolDefinition<TArguments, TContext, TOutcome, TArtifact>,
 ): RegisteredTool<TContext, TOutcome, TArtifact> {
   return {
-    name: definition.name,
-    description: definition.description,
+    ...describeTool(definition.name, definition.description, definition.argumentsSchema),
     role: definition.role,
-    parameters: z.toJSONSchema(definition.argumentsSchema, { target: "draft-07" }),
     isAvailable: definition.isAvailable,
     async execute(argumentsValue, context) {
       const argumentsResult = definition.argumentsSchema.safeParse(argumentsValue);

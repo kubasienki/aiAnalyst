@@ -1,4 +1,4 @@
-import { withConversationApplication } from "../../../server/conversations/http";
+import { withConversationApplication } from "../../../server/config/http";
 
 export const runtime = "nodejs";
 

@@ -7,6 +7,7 @@ import { and, asc, eq, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { conversationRevision, revisionSchema } from "../../../shared/conversations";
+import { MAX_USER_MESSAGE_LENGTH } from "../../../shared/chat";
 import { assistantMessageSchema, type ToolCall } from "../../agent/contracts";
 import { inspectMessageSequence, type MessageSequenceEntry } from "../../agent/message-sequence";
 import { transcriptSequence } from "../../conversations/transcript";
@@ -29,7 +30,7 @@ import { agentTraces, conversations, events, INITIALIZE_SCHEMA, queryEvidence, r
 const startRunSchema = z.strictObject({
   conversationId: identitySchema,
   clientMessageId: identitySchema,
-  message: z.string().trim().min(1).max(2_000),
+  message: z.string().trim().min(1).max(MAX_USER_MESSAGE_LENGTH),
   deadline: z.number().int().nonnegative().safe(),
   versions: runVersionsSchema,
   expectedRevision: revisionSchema,
@@ -376,7 +377,7 @@ export function openConversationRepository(options: Options): ConversationReposi
           conversationId: identitySchema,
           clientMessageId: identitySchema,
           operation: z.discriminatedUnion("kind", [
-            z.strictObject({ kind: z.literal("message"), message: z.string().trim().min(1).max(2_000) }),
+            z.strictObject({ kind: z.literal("message"), message: z.string().trim().min(1).max(MAX_USER_MESSAGE_LENGTH) }),
             z.strictObject({ kind: z.literal("retry"), runId: identitySchema }),
           ]),
         }).parse(input);

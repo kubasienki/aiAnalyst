@@ -1,6 +1,8 @@
 import "server-only";
 import { z } from "zod";
 import { clarificationSchema, answerSchema } from "../../shared/analysis";
+import { describeTool } from "../agent/tool-registration";
+import type { ToolDescription } from "../agent/contracts";
 import { answerChartsSchema, MAX_ANSWER_CHARTS } from "../../shared/charts";
 import { analysisMetadataSchema } from "../../shared/analysis-metadata";
 
@@ -28,25 +30,31 @@ export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
   basis: z.enum(["data", "explanation"]).describe("Use data for any finding about this dataset. Explanation is only for conceptual guidance without empirical claims."),
 });
 
-export const ANALYSIS_TOOL_DESCRIPTIONS = [
+// One definition per tool, in the order they are advertised. The analysis tools
+// register from these specs and the context builder advertises them through the
+// same projection, so a tool's schema is derived once.
+export const ANALYSIS_TOOL_SPECS = [
   {
     name: "inspect_dataset",
     description: "Look up known schema fields, event names/tags, parameter keys and definitions for an unfamiliar dataset topic. Static metadata only; makes no BigQuery query. The catalog is incomplete discovery guidance, never an allowlist.",
-    parameters: z.toJSONSchema(inspectDatasetArgumentsSchema, { target: "draft-07" }),
+    argumentsSchema: inspectDatasetArgumentsSchema,
   },
   {
     name: "run_sql",
     description: "Obtain evidence using guarded read-only BigQuery SQL. Declare intent first, then review returned SQL, scope, grain, units, rows, and completeness before using the evidence.",
-    parameters: z.toJSONSchema(runSqlArgumentsSchema, { target: "draft-07" }),
+    argumentsSchema: runSqlArgumentsSchema,
   },
   {
     name: "request_clarification",
     description: "Ask a focused question when unresolved ambiguity materially changes the analysis. Ends this run.",
-    parameters: z.toJSONSchema(clarificationSchema, { target: "draft-07" }),
+    argumentsSchema: clarificationSchema,
   },
   {
     name: "finish_answer",
     description: "Finish with a direct conclusion, minimal supporting evidence and proportionate interpretation. Supply ranked evidence-backed findings and material open questions. Necessary dataset-investigable diagnostic questions require another test when possible; otherwise give a supported partial answer with the specific obstacle or limit. Include useful visual coverage of the main findings; mention exact earlier chart titles when relying on them and add charts for uncovered findings. Ends this run.",
-    parameters: z.toJSONSchema(finishAnswerArgumentsSchema, { target: "draft-07" }),
+    argumentsSchema: finishAnswerArgumentsSchema,
   },
-];
+] as const;
+
+export const ANALYSIS_TOOL_DESCRIPTIONS: ToolDescription[] = ANALYSIS_TOOL_SPECS
+  .map(spec => describeTool(spec.name, spec.description, spec.argumentsSchema));

@@ -17,5 +17,28 @@ export default defineConfig([
       }],
     },
   },
+  {
+    files: ["src/server/analysis/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          group: ["**/conversations/**"],
+          message: "Analysis and conversations are separate contexts. Shared query evidence lives in src/server/evidence/contracts.",
+        }],
+      }],
+    },
+  },
+  {
+    files: ["src/features/**/*.ts", "src/features/**/*.tsx", "src/shared/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          group: ["**/server/**"],
+          message: "Client and shared modules must stay free of server code. Exchange data through the schemas in src/shared.",
+        }],
+      }],
+    },
+  },
   globalIgnores([".next/**", "out/**", "coverage/**", "private-files/**", "next-env.d.ts"]),
 ]);

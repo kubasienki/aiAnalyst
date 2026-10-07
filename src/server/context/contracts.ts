@@ -5,6 +5,13 @@ import type { ConversationHistory } from "../conversations/repository";
 
 export type ContextErrorCode = "invalid_history" | "missing_evidence" | "replay_mismatch" | "configuration" | "context_limit";
 
+// A context failure that is neither misconfiguration nor an exhausted window is
+// a protocol fault: the request was built wrongly rather than refused. Both the
+// preflight boundary and the run outcome narrow it this way, so it lives here.
+export function contextFailureCode(error: ContextError): "configuration" | "context_limit" | "protocol" {
+  return error.code === "configuration" || error.code === "context_limit" ? error.code : "protocol";
+}
+
 export class ContextError extends Error {
   constructor(public readonly code: ContextErrorCode, message: string) {
     super(message);
