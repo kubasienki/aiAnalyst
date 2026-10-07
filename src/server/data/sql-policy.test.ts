@@ -56,3 +56,31 @@ describe("SQL policy", () => {
     "this is not SQL", "", "x".repeat(32769),
   ])("rejects forbidden or unsupported SQL: %s", sql => expect(() => validateSql(sql)).toThrow());
 });
+
+// Every date function the allowlist advertises must actually be reachable. These
+// parse to dedicated AST node types rather than ordinary function calls, so an
+// allowlist entry alone does not make them usable.
+describe("advertised date functions", () => {
+  const day = `PARSE_DATE('%Y%m%d', event_date)`;
+
+  it.each([
+    ["DATE_TRUNC to a month key", `SELECT DATE_TRUNC(${day}, MONTH) AS month, SUM(x) AS total FROM ${table} WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231' GROUP BY month`],
+    ["EXTRACT a date part", `SELECT EXTRACT(MONTH FROM ${day}) AS month, COUNT(*) AS n FROM ${table} WHERE _TABLE_SUFFIX = '20201201' GROUP BY month`],
+    ["PARSE_DATE", `SELECT ${day} AS day FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["FORMAT_DATE", `SELECT FORMAT_DATE('%Y-%m', ${day}) AS month FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["DATE_DIFF with a date part", `SELECT DATE_DIFF(${day}, DATE '2020-12-01', DAY) AS offset_days FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["TIMESTAMP_MICROS", `SELECT TIMESTAMP_MICROS(event_timestamp) AS moment FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["a typed DATE literal", `SELECT COUNT(*) AS n FROM ${table} WHERE _TABLE_SUFFIX = '20201201' AND ${day} >= DATE '2020-12-01'`],
+    ["a typed TIMESTAMP literal", `SELECT COUNT(*) AS n FROM ${table} WHERE _TABLE_SUFFIX = '20201201' AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP '2020-12-01 00:00:00+00'`],
+  ])("accepts %s", (_, sql) => expect(() => validateSql(sql)).not.toThrow());
+
+  // Widening the date-part and literal node types must not reopen the routine or
+  // window escapes those rejections share a code path with.
+  it.each([
+    ["a qualified routine", `SELECT foreign_project.dataset.fn(1) AS x FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["an unallowlisted date function", `SELECT DATE_ADD(${day}, INTERVAL 1 DAY) AS x FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["a window function over a date key", `SELECT ROW_NUMBER() OVER(ORDER BY ${day}) AS n FROM ${table} WHERE _TABLE_SUFFIX = '20201201'`],
+    ["a foreign table behind a date key", `SELECT DATE_TRUNC(d, MONTH) AS month FROM foreign_project.data.table`],
+    ["an unbounded scan with a date key", `SELECT DATE_TRUNC(${day}, MONTH) AS month FROM ${table}`],
+  ])("still rejects %s", (_, sql) => expect(() => validateSql(sql)).toThrow());
+});

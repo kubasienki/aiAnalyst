@@ -15,6 +15,11 @@ const EXPRESSION_TYPES = new Set([
   "column_ref", "binary_expr", "unary_expr", "expr_list", "function", "aggr_func",
   "cast", "case", "when", "else", "number", "bool", "null", "default",
   "single_quote_string", "double_quote_string", "string", "star", "ASC", "DESC",
+  // EXTRACT and date-part arguments (the MONTH in DATE_TRUNC(d, MONTH)) parse to
+  // dedicated nodes, and typed DATE/TIMESTAMP literals to their own. All carry a
+  // literal value with no executable child; without them the date functions in
+  // FUNCTIONS are unreachable.
+  "extract", "origin", "date", "timestamp",
 ]);
 
 function asNode(value: unknown): SqlNode {
@@ -143,10 +148,18 @@ function validateExpression(astNode: SqlNode): void {
     let name = readIdentifier(astNode.name);
     if (typeof astNode.name === "object") {
       const functionName = asNode(astNode.name);
-      if (!Array.isArray(functionName.name) || functionName.name.length) {
+      const path = readNodeArray(functionName.name);
+      if (!path.length) {
+        // Ordinary built-ins leave the path empty and carry the name in `schema`.
+        name = readIdentifier(functionName.schema);
+      } else if (path.length === 1 && !functionName.schema && asNode(path[0]).type === "origin") {
+        // The parser special-cases some built-ins, such as DATE_TRUNC, into a
+        // one-element path. A qualified routine always also carries a schema,
+        // so requiring its absence keeps `dataset.fn()` rejected.
+        name = readIdentifier(path[0]);
+      } else {
         throw new DataQueryError("rejected_sql", "Qualified routines are not allowed.");
       }
-      name = readIdentifier(functionName.schema);
     }
     if (!FUNCTIONS.has(name.toUpperCase())) {
       throw new DataQueryError("unsupported_sql", "Function is not in the supported built-in allowlist.");

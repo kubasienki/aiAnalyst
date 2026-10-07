@@ -68,8 +68,8 @@ export const REFERENCE_QUERIES = {
   decemberRevenue: `SELECT SUM(ecommerce.purchase_revenue_in_usd) AS revenue_usd
     FROM ${source} WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
     AND event_name = 'purchase'`,
-  revenueByDevice: `SELECT SUBSTR(event_date, 1, 6) AS month, device.category AS device,
-    SUM(ecommerce.purchase_revenue_in_usd) AS revenue_usd
+  revenueByDevice: `SELECT DATE_TRUNC(PARSE_DATE('%Y%m%d', event_date), MONTH) AS month,
+    device.category AS device, SUM(ecommerce.purchase_revenue_in_usd) AS revenue_usd
     FROM ${source} WHERE _TABLE_SUFFIX BETWEEN '20201101' AND '20201231'
     AND event_name = 'purchase' GROUP BY month, device ORDER BY month, device`,
   decemberUsers: `SELECT COUNT(DISTINCT user_pseudo_id) AS users
