@@ -66,6 +66,7 @@ export class ChatController {
   private pollingTimer: ReturnType<typeof setTimeout> | null = null;
   private available = true;
   private disposed = false;
+  private conversationUnavailable = false;
 
   constructor(private readonly dependencies: ChatControllerDependencies) {}
 
@@ -96,7 +97,7 @@ export class ChatController {
 
   private schedulePoll(): void {
     this.stopPolling();
-    if (!this.available || this.disposed || this.state.recovery) {
+    if (!this.available || this.disposed || this.state.recovery || this.conversationUnavailable) {
       return;
     }
     if (latestAttempt(this.state.snapshot)?.status !== "running" && this.state.phase !== "reconnecting") {
@@ -220,6 +221,7 @@ export class ChatController {
     let message = "Conversation status could not be loaded. Check status before sending.";
     if (error instanceof ChatRequestError && error.status === 404) {
       message = "This conversation is unavailable. Start a new conversation.";
+      this.conversationUnavailable = true;
     }
     this.update({
       phase: "reconnecting",
@@ -244,6 +246,7 @@ export class ChatController {
         if (!this.isCurrent(generation) || this.activeSnapshotController !== controller) {
           return;
         }
+        this.conversationUnavailable = false;
         this.rememberConversationIdentity(snapshot.conversationId);
         if (this.state.phase === "reconnecting" || this.state.phase === "loading") {
           this.update({ error: null });
@@ -480,6 +483,7 @@ export class ChatController {
     this.stopRequestsAndPolling();
     this.clearPending();
     this.conversationId = null;
+    this.conversationUnavailable = false;
     this.update({
       ...initialState,
       conversationKey: this.state.conversationKey + 1,
