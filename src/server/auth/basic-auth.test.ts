@@ -56,13 +56,33 @@ describe("assessment access protection", () => {
     },
   );
 
-  it("rejects cross-site requests even with valid credentials", () => {
+  it("allows cross-site safe requests so browsers can load the assessment", () => {
+    vi.stubEnv("BASIC_AUTH_USERNAME", credentials.BASIC_AUTH_USERNAME);
+    vi.stubEnv("BASIC_AUTH_PASSWORD", credentials.BASIC_AUTH_PASSWORD);
+    const request = new NextRequest("https://assessment.example/api/conversations", {
+      method: "GET",
+      headers: { authorization, "sec-fetch-site": "cross-site" },
+    });
+    expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("rejects cross-site state changes using the origin header", () => {
     vi.stubEnv("BASIC_AUTH_USERNAME", credentials.BASIC_AUTH_USERNAME);
     vi.stubEnv("BASIC_AUTH_PASSWORD", credentials.BASIC_AUTH_PASSWORD);
     const request = new NextRequest("https://assessment.example/api/conversations", {
       method: "POST",
-      headers: { authorization, "sec-fetch-site": "cross-site" },
+      headers: { authorization, origin: "https://attacker.example", "sec-fetch-site": "cross-site" },
     });
     expect(proxy(request).status).toBe(403);
+  });
+
+  it("allows same-origin state changes", () => {
+    vi.stubEnv("BASIC_AUTH_USERNAME", credentials.BASIC_AUTH_USERNAME);
+    vi.stubEnv("BASIC_AUTH_PASSWORD", credentials.BASIC_AUTH_PASSWORD);
+    const request = new NextRequest("https://assessment.example/api/conversations", {
+      method: "POST",
+      headers: { authorization, origin: "https://assessment.example" },
+    });
+    expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
   });
 });

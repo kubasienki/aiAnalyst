@@ -21,9 +21,14 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  // Browsers can replay Basic Auth automatically. Reject cross-site requests
-  // before they can submit paid analytical work or read assessment history.
-  if (request.headers.get("sec-fetch-site") === "cross-site") {
+  // Basic Auth is replayed by browsers. Check the origin of state-changing
+  // requests so unrelated sites cannot submit questions using cached credentials.
+  const changesState = !["GET", "HEAD", "OPTIONS"].includes(request.method);
+  const requestOrigin = request.headers.get("origin");
+  const hasCrossSiteFetch = request.headers.get("sec-fetch-site") === "cross-site";
+  const originDoesNotMatch = requestOrigin !== null && requestOrigin !== request.nextUrl.origin;
+
+  if (changesState && (originDoesNotMatch || (requestOrigin === null && hasCrossSiteFetch))) {
     return new NextResponse("Cross-site access is not allowed.", {
       status: 403,
       headers: { "Cache-Control": "no-store" },
