@@ -28,6 +28,7 @@ describe("tool argument feedback", () => {
           issues: Array.from({ length: 8 }, (_, index) => ({
             field: `fields.${index}`,
             code: "invalid_type",
+            expected: expect.stringContaining("expected number"),
           })),
         },
       },

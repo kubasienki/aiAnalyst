@@ -3,7 +3,7 @@ import { DATASET_CATALOG_VERSION } from "./dataset-catalog";
 
 // This version covers definitions and the verified historical schema supplied
 // with the prompt. Historical evidence retains its original version/snapshot.
-export const SEMANTIC_GUIDE_VERSION = "ga4-sample-v5";
+export const SEMANTIC_GUIDE_VERSION = "ga4-sample-v7";
 
 export const SEMANTIC_GUIDE = `
 Source: bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_* (BigQuery US).
@@ -108,6 +108,9 @@ a narrowly date- and event-bounded run_sql query. Project only the requested nes
 do not load arbitrary event rows or every tag into context. The same guarded SQL boundary remains open
 to supported analyses beyond the catalog. A discovery scan consumes the normal BigQuery byte budget.
 Use bounded _TABLE_SUFFIX dates and event_date for reporting. Null is not zero.
+Monthly keys: use DATE_TRUNC(PARSE_DATE('%Y%m%d', event_date), MONTH) in every aggregate being compared
+or joined. A daily event_date renamed 'month' is not monthly; joining it to monthly totals keeps only day one.
+Verify that period keys and denominators cover the same complete periods.
 Use SAFE_DIVIDE and report denominators. Never average subgroup rates without their weights.
 Item-list/name and source categories can be unavailable or shared. State the chosen grouping.
 Record observed contributors, not causes. Missing funnel stages are not proof of abandonment.

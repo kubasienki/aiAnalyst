@@ -30,7 +30,7 @@ describe("on-demand dataset catalog", () => {
     const revenue = semanticSnapshotForQuery("SELECT SUM(ecommerce.purchase_revenue_in_usd) FROM events");
     const session = semanticSnapshotForQuery("SELECT ga_session_id FROM events");
     expect(revenue).toContain("Purchase revenue");
-    expect(revenue).toContain("catalog ga4-sample-catalog-v3");
+    expect(revenue).toContain("catalog ga4-sample-catalog-v4");
     expect(revenue).not.toContain("begin_checkout");
     expect(session).toContain("session is (available user_pseudo_id");
     expect(revenue.length).toBeLessThan(1_000);

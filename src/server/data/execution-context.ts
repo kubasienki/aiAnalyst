@@ -2,6 +2,9 @@ import { createExecutionScope, executionStopReason, ExecutionStopped, validExecu
 import { DataQueryError } from "./errors";
 import type { ExecutionContext } from "./types";
 
+// Per-run SQL allowance; repairs of failed queries consume it too.
+export const MAX_SQL_ATTEMPTS = 4;
+
 type ExecutionOptions = {
   signal?: AbortSignal;
   // Absolute deadline in milliseconds since the Unix epoch.
@@ -17,7 +20,7 @@ export function createExecutionContext(options: ExecutionOptions = {}): Executio
     deadline,
     budget: {
       attemptsUsed: 0,
-      maxAttempts: 4,
+      maxAttempts: MAX_SQL_ATTEMPTS,
       resultBytesUsed: 0,
       maxResultBytes: 1024 * 1024,
     },

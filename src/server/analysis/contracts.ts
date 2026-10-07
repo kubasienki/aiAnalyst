@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { clarificationSchema, answerSchema } from "../../shared/analysis";
-import { answerChartsSchema } from "../../shared/charts";
+import { answerChartsSchema, MAX_ANSWER_CHARTS } from "../../shared/charts";
 import { analysisMetadataSchema } from "../../shared/analysis-metadata";
 
 const nonemptyText = z.string().trim().min(1);
@@ -24,7 +24,7 @@ export type { AnalysisOutcome, Answer, Clarification } from "../../shared/analys
 export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
   analysis: analysisMetadataSchema.describe("Compact accepted interpretation, ranked evidence-backed findings and useful unanswered questions. Latest user corrections override prior interpretation. Required unresolved diagnostic questions block early finishing when further investigation is possible."),
   narrative: answerSchema.shape.narrative.describe("Lead with the direct answer. Explain supported findings and their business implications; quantify relevant comparisons and contributors when the question warrants investigation. Distinguish observations from hypotheses and disclose unresolved questions. Keep scalar answers concise; do not merely repeat chart values."),
-  charts: answerChartsSchema.describe("Illustrate the main findings that benefit from at-a-glance visual understanding, even without an explicit chart request. New charts plus earlier charts referenced by exact title should adequately cover those findings. Choose the smallest set that achieves coverage, up to three charts. Supply [] only when visuals add no clarity, named earlier charts adequately cover the findings, the user requests no charts, or supported chart evidence is unavailable. Preserve valid charts when repairing another. Reference saved evidence and columns; never copy values or write rendering code."),
+  charts: answerChartsSchema.describe(`Illustrate the main findings that benefit from at-a-glance visual understanding, even without an explicit chart request. New charts plus earlier charts referenced by exact title should adequately cover those findings. Choose the smallest set that achieves coverage, up to ${MAX_ANSWER_CHARTS} charts. Supply [] only when visuals add no clarity, named earlier charts adequately cover the findings, the user requests no charts, or supported chart evidence is unavailable. Preserve valid charts when repairing another. Reference saved evidence and columns; never copy values or write rendering code.`),
   basis: z.enum(["data", "explanation"]).describe("Use data for any finding about this dataset. Explanation is only for conceptual guidance without empirical claims."),
 });
 

@@ -19,11 +19,14 @@ export function registerTool<TArguments, TContext, TOutcome, TArtifact = never>(
           error: {
             code: "invalid_arguments",
             message: "Arguments must match the advertised tool schema. Repair the listed fields using their schema definitions.",
-            // Report bounded field paths and categories, never submitted values.
+            // Report bounded field paths, categories and schema expectations, never
+            // submitted values. Without the expectation (e.g. the allowed enum values)
+            // models were observed resubmitting the same invalid call until the budget ran out.
             details: {
               issues: argumentsResult.error.issues.slice(0, 8).map(issue => ({
                 field: issue.path.map(part => String(part)).join(".").slice(0, 200) || "arguments",
                 code: issue.code,
+                expected: issue.message.slice(0, 200),
               })),
             },
           },

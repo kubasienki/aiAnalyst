@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryService } from "./query-service";
 import { createExecutionContext } from "./execution-context";
 import { REFERENCE_QUERIES } from "./reference-queries";
+import { SEMANTIC_GUIDE_VERSION } from "./semantic-guide";
 import type { BigQueryGateway, DataQueryJob, QueryPage } from "./types";
 
 const sql = REFERENCE_QUERIES.decemberRevenue;
@@ -26,7 +27,7 @@ describe("query service", () => {
     const result = await execute({ sql }, context);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.evidence).toMatchObject({ sql: sql.trim(), rows: [{ revenue_usd: 160555 }], jobId: "test-job", truncated: false, semanticGuideVersion: "ga4-sample-v5" });
+    expect(result.evidence).toMatchObject({ sql: sql.trim(), rows: [{ revenue_usd: 160555 }], jobId: "test-job", truncated: false, semanticGuideVersion: SEMANTIC_GUIDE_VERSION });
     expect(context.budget.attemptsUsed).toBe(1);
     expect(context.budget.resultBytesUsed).toBe(result.evidence.payloadBytes);
     expect(gateway.submit).toHaveBeenCalledWith(sql.trim(), expect.objectContaining({ maximumBytesBilled: "1073741824" }));
