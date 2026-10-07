@@ -78,6 +78,19 @@ export type ModelRequest = {
   // Absolute run deadline in milliseconds since the Unix epoch.
   deadline: number;
   signal: AbortSignal;
+  // Internal persistence hook. Provider adapters must not serialize it.
+  recordTrace?: (trace: ModelCallTrace) => Promise<void>;
+};
+
+export type ModelCallTrace = {
+  requestBody: JsonValue;
+  responseBody: string | null;
+  status: number | null;
+  requestId?: string;
+  errorCategory?: string;
+  startedAt: number;
+  finishedAt: number;
+  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; reasoningTokens?: number };
 };
 
 export type ModelResponse = {

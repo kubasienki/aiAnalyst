@@ -97,6 +97,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
           maxOutputTokens: limits.maxOutputTokens,
           deadline: input.deadline,
           signal: activeExecution.signal,
+          recordTrace: input.recordModelCall,
         };
       }
 
@@ -171,17 +172,38 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
         activeExecution.check();
         phase = "tool";
         statistics.toolExecutions++;
-        const result = await activeExecution.wait(action.tool.execute(action.argumentsValue, {
-          applicationContext: input.applicationContext,
-          signal: activeExecution.signal,
-          deadline: input.deadline,
-          checkContinuation(content) {
-            activeExecution.check();
-            const request = prepareRequest([...messages, { role: "tool", callId: call.callId, content: jsonValueSchema.parse(content) }]);
-            dependencies.preflight(request);
-            activeExecution.check();
-          },
-        }));
+        const toolStartedAt = Date.now();
+        let result: Awaited<ReturnType<typeof action.tool.execute>>;
+        try {
+          result = await activeExecution.wait(action.tool.execute(action.argumentsValue, {
+            applicationContext: input.applicationContext,
+            signal: activeExecution.signal,
+            deadline: input.deadline,
+            checkContinuation(content) {
+              activeExecution.check();
+              const request = prepareRequest([...messages, { role: "tool", callId: call.callId, content: jsonValueSchema.parse(content) }]);
+              dependencies.preflight(request);
+              activeExecution.check();
+            },
+          }));
+        } catch (error) {
+          await input.recordToolCall?.({
+            name: call.name,
+            argumentsValue: jsonValueSchema.parse(action.argumentsValue),
+            result: null,
+            startedAt: toolStartedAt,
+            finishedAt: Date.now(),
+            error: error instanceof AgentRunnerError ? error.code : "tool_failed",
+          });
+          throw error;
+        }
+        await input.recordToolCall?.({
+          name: call.name,
+          argumentsValue: jsonValueSchema.parse(action.argumentsValue),
+          result: jsonValueSchema.parse(JSON.parse(JSON.stringify(result))),
+          startedAt: toolStartedAt,
+          finishedAt: Date.now(),
+        });
         activeExecution.check();
         if (result.kind === "terminal") {
           if (action.tool.role !== "terminal") {

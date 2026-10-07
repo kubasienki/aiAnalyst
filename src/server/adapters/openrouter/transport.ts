@@ -22,6 +22,14 @@ export type CompletionEnvelope = {
   choice: Record<string, unknown>;
   requestId?: string;
 };
+export type TransportTrace = {
+  responseBody: string | null;
+  status: number | null;
+  requestId?: string;
+  errorCategory?: string;
+  startedAt: number;
+  finishedAt: number;
+};
 
 export function logFailure(diagnostic: OpenRouterDiagnostic) {
   console.error("OpenRouter completion failed", diagnostic);
@@ -149,7 +157,7 @@ export function createOpenRouterTransport(
 
   return async function complete<T>(
     body: Record<string, unknown>,
-    options: { signal: AbortSignal; deadline?: number },
+    options: { signal: AbortSignal; deadline?: number; onTrace?: (trace: TransportTrace, result?: T) => Promise<void> },
     normalize: (envelope: CompletionEnvelope) => T,
   ): Promise<T> {
     if (options.signal.aborted) {
@@ -163,6 +171,9 @@ export function createOpenRouterTransport(
     const timeout = AbortSignal.timeout(Math.min(60_000, remainingMs));
     const requestSignal = AbortSignal.any([options.signal, timeout]);
     const diagnostic: OpenRouterDiagnostic = { category: "network", model: config.model };
+    let rawResponseBody: string | null = null;
+    let completedResult: T | undefined;
+    let completed = false;
     function reportDiagnostic(category: FailureCategory): void {
       try {
         reportFailure({ ...diagnostic, category, elapsedMs: Date.now() - startedAt });
@@ -214,11 +225,20 @@ export function createOpenRouterTransport(
 
       if (!response.ok && response.status !== 400) {
         diagnostic.category = "http";
-        stopReading(response.body, reportCleanupFailure);
+        const responseLengthHeader = response.headers.get("content-length");
+        const responseLength = responseLengthHeader === null ? Number.NaN : Number(responseLengthHeader);
+        if (Number.isSafeInteger(responseLength) && responseLength >= 0 && responseLength <= byteLimit) {
+          rawResponseBody = await readBody(response, requestSignal, byteLimit, reportCleanupFailure);
+        } else {
+          // Unknown-length error streams are disposed instead of risking a stalled model call.
+          stopReading(response.body, reportCleanupFailure);
+        }
         throw new ModelError("provider", "The AI provider could not complete the request. Please retry.");
       }
+
       diagnostic.category = "invalid_response";
       const responseBody = await readBody(response, requestSignal, byteLimit, reportCleanupFailure);
+      rawResponseBody = responseBody;
       checkExecutionBudget();
       let payload: unknown;
       if (!response.ok) {
@@ -259,6 +279,8 @@ export function createOpenRouterTransport(
       }
       const result = normalize({ payload, choice, requestId: diagnostic.requestId });
       checkExecutionBudget();
+      completedResult = result;
+      completed = true;
       return result;
     } catch (error) {
       if (options.signal.aborted) {
@@ -282,6 +304,17 @@ export function createOpenRouterTransport(
         throw error;
       }
       throw new ModelError("provider", "The AI provider could not be reached. Please retry.");
+    } finally {
+      if (options.onTrace) {
+        await options.onTrace({
+          responseBody: rawResponseBody,
+          status: diagnostic.status ?? null,
+          requestId: diagnostic.requestId,
+          errorCategory: completed ? undefined : diagnostic.category,
+          startedAt,
+          finishedAt: Date.now(),
+        }, completedResult);
+      }
     }
   };
 }

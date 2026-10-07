@@ -44,6 +44,16 @@ export const queryEvidence = sqliteTable("query_evidence", {
   createdAt: integer("created_at").notNull(),
 }, table => [index("evidence_conversation").on(table.conversationId)]);
 
+export const agentTraces = sqliteTable("agent_traces", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => runs.id),
+  sequence: integer("sequence").notNull(),
+  kind: text("kind").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  startedAt: integer("started_at").notNull(),
+  finishedAt: integer("finished_at"),
+}, table => [uniqueIndex("agent_traces_sequence").on(table.runId, table.sequence)]);
+
 // Assessment-only initialization. Existing tables are never upgraded or deleted.
 export const INITIALIZE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS conversations (
@@ -85,4 +95,14 @@ CREATE TABLE IF NOT EXISTS query_evidence (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS evidence_conversation ON query_evidence(conversation_id);
+CREATE TABLE IF NOT EXISTS agent_traces (
+  id TEXT PRIMARY KEY NOT NULL,
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  sequence INTEGER NOT NULL CHECK(sequence > 0),
+  kind TEXT NOT NULL CHECK(kind IN ('model_call','tool_call')),
+  payload_json TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_traces_sequence ON agent_traces(run_id, sequence);
 `;

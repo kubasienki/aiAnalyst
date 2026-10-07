@@ -54,6 +54,24 @@ describe("tool-capable OpenRouter adapter", () => {
     expect(result).toMatchObject({ finishReason: "stop", message: { content: "Answer", toolCalls: [] }, requestId: "generation-1" });
   });
 
+  it("records the exact outbound body, raw provider reply, timing, and usage", async () => {
+    const value = payload({ role: "assistant", content: "Answer" });
+    Object.assign(value, { usage: { prompt_tokens: 23, completion_tokens: 7 } });
+    const { model, fetcher } = setup(value);
+    const recordTrace = vi.fn(async () => {});
+
+    await model.complete(request({ recordTrace }));
+
+    expect(recordTrace).toHaveBeenCalledWith(expect.objectContaining({
+      requestBody: sentBody(fetcher),
+      responseBody: JSON.stringify(value),
+      status: 200,
+      usage: { inputTokens: 23, outputTokens: 7 },
+      startedAt: expect.any(Number),
+      finishedAt: expect.any(Number),
+    }));
+  });
+
   it.each([
     [{ kind: "none" }, "none"],
     [{ kind: "specific", name: "run_sql" }, { type: "function", function: { name: "run_sql" } }],

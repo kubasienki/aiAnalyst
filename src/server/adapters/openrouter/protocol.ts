@@ -61,6 +61,7 @@ function serializeMessage(message: ModelMessage): Record<string, unknown> {
 
 export function serializeRequest(request: ModelRequest, model: string): Record<string, unknown> & { model: string } {
   const { signal, ...input } = request;
+  delete input.recordTrace;
   if (!(signal instanceof AbortSignal)) {
     invalidRequest();
   }

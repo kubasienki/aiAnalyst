@@ -37,6 +37,12 @@ export type SubmissionLookup = {
 export type RetryRunInput = Omit<StartRunInput, "message"> & { runId: string };
 export type StartRunResult = { run: ConversationRun; created: boolean };
 export type FinishRunInput = { outcome: RunOutcome; acknowledgment?: StoredToolResult };
+export type AgentTraceInput = {
+  kind: "model_call" | "tool_call";
+  payload: import("../contracts/json").JsonValue;
+  startedAt: number;
+  finishedAt: number | null;
+};
 
 export type ConversationHistory = {
   conversation: Conversation;
@@ -52,6 +58,7 @@ export interface ConversationRepository {
   startRun(input: StartRunInput): Promise<StartRunResult>;
   retryRun(input: RetryRunInput): Promise<StartRunResult>;
   appendAssistant(runId: string, message: AssistantMessage): Promise<ConversationEvent>;
+  recordAgentTrace(runId: string, trace: AgentTraceInput): Promise<void>;
   appendContextNote(runId: string, content: string): Promise<ConversationEvent>;
   recordToolResult(runId: string, result: StoredToolResult, evidence?: EvidenceInput): Promise<ConversationEvent>;
   finishRun(runId: string, input: FinishRunInput): Promise<ConversationRun>;

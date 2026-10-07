@@ -1,6 +1,6 @@
 import "server-only";
 import type { JsonValue } from "../contracts/json";
-import type { AgentModel, ModelMessage, ModelRequest, ModelResponse, RegisteredTool } from "./contracts";
+import type { AgentModel, ModelCallTrace, ModelMessage, ModelRequest, ModelResponse, RegisteredTool } from "./contracts";
 
 export type AgentFailureCode = "configuration" | "protocol" | "provider" | "timeout" | "cancelled"
   | "deadline" | "budget_exhausted" | "context_limit" | "persistence" | "internal";
@@ -37,6 +37,8 @@ export type AgentRunInput<TContext, TOutcome, TArtifact = never> = {
   // The adapter must complete or reject started writes. The runner deliberately
   // does not race them against cancellation because terminal writes can commit.
   checkpoint(event: AgentCheckpoint<TOutcome, TArtifact>): Promise<void>;
+  recordModelCall?(trace: ModelCallTrace): Promise<void>;
+  recordToolCall?(trace: { name: string; argumentsValue: JsonValue; result: JsonValue | null; startedAt: number; finishedAt: number; error?: string }): Promise<void>;
 };
 
 export type RunnerPhase = "configuration" | "preflight" | "model" | "checkpoint" | "action" | "tool";

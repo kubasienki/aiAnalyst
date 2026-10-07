@@ -10,6 +10,7 @@ import {
   type MessageSubmission, type RetrySubmission, type ConversationSnapshot, type ChatStreamEvent,
 } from "../../shared/conversations";
 import type { AnalysisRunInput } from "../analysis/types";
+import { jsonValueSchema } from "../contracts/json";
 import { ConversationRepositoryError, type ConversationRepository } from "./repository";
 import type { ConversationRun, RunOutcome, RunVersions } from "./contracts";
 import { projectConversation } from "./display";
@@ -102,6 +103,22 @@ export function createConversationService(dependencies: Dependencies) {
         storedEvidence: history.evidence,
         signal,
         deadline: admittedRun.deadline,
+        async recordModelCall(trace) {
+          await repository.recordAgentTrace(runId, {
+            kind: "model_call",
+            payload: jsonValueSchema.parse(trace),
+            startedAt: trace.startedAt,
+            finishedAt: trace.finishedAt,
+          });
+        },
+        async recordToolCall(trace) {
+          await repository.recordAgentTrace(runId, {
+            kind: "tool_call",
+            payload: jsonValueSchema.parse(trace),
+            startedAt: trace.startedAt,
+            finishedAt: trace.finishedAt,
+          });
+        },
         async checkpoint(event) {
           switch (event.kind) {
             case "assistant":

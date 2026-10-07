@@ -89,6 +89,34 @@ describe("SQLite conversation repository", () => {
     expect((await repository.loadHistory(conversation.id)).runs[0].status).toBe("failed");
   });
 
+  it("persists ordered model and tool traces separately from conversation events", async () => {
+    const { repository, databasePath } = fixture();
+    const { conversation, run } = await start(repository);
+    await repository.recordAgentTrace(run.id, {
+      kind: "model_call",
+      payload: { requestBody: { messages: [{ role: "user", content: "question" }] }, responseBody: "raw", usage: { inputTokens: 10, outputTokens: 3 } },
+      startedAt: 1_100,
+      finishedAt: 1_250,
+    });
+    await repository.recordAgentTrace(run.id, {
+      kind: "tool_call",
+      payload: { name: "run_sql", argumentsValue: { sql: "SELECT 1" }, result: { kind: "continue" } },
+      startedAt: 1_260,
+      finishedAt: 1_400,
+    });
+
+    const observer = new Database(databasePath, { readonly: true });
+    observers.push(observer);
+    const traces = observer.prepare("SELECT sequence, kind, payload_json AS payloadJson FROM agent_traces WHERE run_id = ? ORDER BY sequence").all(run.id);
+    const history = await repository.loadHistory(conversation.id);
+
+    expect(traces).toEqual([
+      { sequence: 1, kind: "model_call", payloadJson: JSON.stringify({ requestBody: { messages: [{ role: "user", content: "question" }] }, responseBody: "raw", usage: { inputTokens: 10, outputTokens: 3 } }) },
+      { sequence: 2, kind: "tool_call", payloadJson: JSON.stringify({ name: "run_sql", argumentsValue: { sql: "SELECT 1" }, result: { kind: "continue" } }) },
+    ]);
+    expect(history.events).toHaveLength(1);
+  });
+
   it("reads a committed snapshot while another connection holds the write reservation", async () => {
     const { repository, databasePath } = fixture();
     const { conversation } = await start(repository);

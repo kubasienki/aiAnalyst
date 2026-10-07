@@ -1,5 +1,7 @@
 import "server-only";
 import type { AgentCheckpoint, AgentResult, AgentRunInput } from "../agent/runner-contracts";
+import type { ModelCallTrace } from "../agent/contracts";
+import type { JsonValue } from "../contracts/json";
 import type { BuiltContext } from "../context/contracts";
 import type { EvidenceInput, StoredEvidence } from "../conversations/contracts";
 import type { ExecutionContext } from "../data/types";
@@ -28,6 +30,8 @@ export type AnalysisRunInput = {
   // Caller-owned absolute Unix milliseconds; never renewed by a tool.
   deadline: number;
   checkpoint(event: AnalysisCheckpoint): Promise<void>;
+  recordModelCall?(trace: ModelCallTrace): Promise<void>;
+  recordToolCall?(trace: { name: string; argumentsValue: JsonValue; result: JsonValue | null; startedAt: number; finishedAt: number; error?: string }): Promise<void>;
 };
 
 export type AnalysisRunner = (

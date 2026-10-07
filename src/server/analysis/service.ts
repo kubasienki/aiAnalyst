@@ -44,6 +44,8 @@ export function createAnalysisService(dependencies: { runAgent: AnalysisRunner; 
       applicationContext: { queryExecution, visibleEvidence },
       signal: input.signal,
       deadline: input.deadline,
+      recordModelCall: input.recordModelCall,
+      recordToolCall: input.recordToolCall,
       async checkpoint(event) {
         await input.checkpoint(event);
         // Handlers do not grant visibility. Only durably checkpointed, fully

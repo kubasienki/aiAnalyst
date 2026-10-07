@@ -20,9 +20,9 @@ import {
 } from "../../conversations/contracts";
 import {
   ConversationRepositoryError, type ConversationRepository,
-  type FinishRunInput, type StartRunResult,
+  type AgentTraceInput, type FinishRunInput, type StartRunResult,
 } from "../../conversations/repository";
-import { conversations, events, INITIALIZE_SCHEMA, queryEvidence, runs } from "./schema";
+import { agentTraces, conversations, events, INITIALIZE_SCHEMA, queryEvidence, runs } from "./schema";
 
 const startRunSchema = z.strictObject({
   conversationId: identitySchema,
@@ -105,6 +105,7 @@ export function openConversationRepository(options: Options): ConversationReposi
     db.select().from(runs).limit(0).all();
     db.select().from(events).limit(0).all();
     db.select().from(queryEvidence).limit(0).all();
+    db.select().from(agentTraces).limit(0).all();
   } catch (cause) {
     connection.close();
     throw new ConversationRepositoryError(
@@ -482,6 +483,22 @@ export function openConversationRepository(options: Options): ConversationReposi
           conflict("Tool-call IDs must be unique within a run.");
         }
         return appendEvent(run, { kind: "assistant_message", message: parsed }, now());
+      }));
+    },
+    recordAgentTrace(runId, trace: AgentTraceInput) {
+      return perform(() => transaction(() => {
+        const run = requireActiveRun(identitySchema.parse(runId));
+        const latest = db.select({ sequence: sql<number>`coalesce(max(${agentTraces.sequence}), 0)` })
+          .from(agentTraces).where(eq(agentTraces.runId, run.id)).get();
+        db.insert(agentTraces).values({
+          id: randomUUID(),
+          runId: run.id,
+          sequence: (latest?.sequence ?? 0) + 1,
+          kind: trace.kind,
+          payloadJson: JSON.stringify(trace.payload),
+          startedAt: trace.startedAt,
+          finishedAt: trace.finishedAt,
+        }).run();
       }));
     },
     recordToolResult(runId, result, evidence) {
