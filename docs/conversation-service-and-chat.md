@@ -176,6 +176,23 @@ question/choices in context. Two tabs with the same revision race admission: one
 wins and the other refreshes. Explicit retry links an eligible latest attempt and
 reuses its question. A process crash leaves running state until expiry reconciliation.
 
+## Browser chat layout and controls
+
+The browser chat keeps the header and composer visible within the viewport. The
+conversation is the scrollable region between them; new snapshots follow the
+latest message only while the reader is already near the bottom. Scrolling up
+keeps the current reading position, and changing conversations resets the view.
+
+The message box remains editable while a locally submitted request is running.
+The Send control becomes a square stop button that aborts that request. The
+browser then reloads the authoritative conversation snapshot before allowing
+another submission. The server records cancellation when it has accepted the
+request; if completion commits first, the completed answer is retained. Text
+typed while waiting is preserved when the submitted message is accepted, when
+the answer completes, and when the request is cancelled. A running attempt
+restored from server history has no local request to abort, so it remains
+read-only for submission until polling observes its terminal state.
+
 ## Verification and limits
 
 Fake analysis/model tests and temporary SQLite integration tests cover answers,

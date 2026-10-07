@@ -10,11 +10,15 @@ import styles from "./chat.module.css";
 
 export function ChatApp() {
   const { state, controller } = useChat();
-  const endRef = useRef<HTMLDivElement>(null);
-  const disabled = state.phase !== "ready" || state.recovery !== null || !state.online;
+  const conversationRef = useRef<HTMLElement>(null);
+  const followLatestRef = useRef(true);
+  const inputDisabled = state.phase === "loading" || state.recovery !== null;
+  const choicesDisabled = state.phase !== "ready" || state.recovery !== null || !state.online;
   const snapshot = state.snapshot;
   let indication: string | null = null;
-  if (state.phase === "loading") {
+  if (state.cancelling) {
+    indication = "Cancelling…";
+  } else if (state.phase === "loading") {
     indication = "Loading conversation…";
   } else if (state.phase === "reconnecting") {
     indication = "Reconnecting…";
@@ -23,10 +27,28 @@ export function ChatApp() {
   }
 
   useEffect(() => {
-    if (snapshot?.turns.length) {
-      endRef.current?.scrollIntoView({ block: "end" });
+    const conversation = conversationRef.current;
+    if (conversation && followLatestRef.current) {
+      conversation.scrollTop = conversation.scrollHeight;
     }
   }, [snapshot?.revision, snapshot?.turns.length]);
+
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    followLatestRef.current = true;
+    if (conversation) {
+      conversation.scrollTop = 0;
+    }
+  }, [state.conversationKey]);
+
+  function handleConversationScroll() {
+    const conversation = conversationRef.current;
+    if (!conversation) {
+      return;
+    }
+    const distanceFromBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
+    followLatestRef.current = distanceFromBottom < 80;
+  }
 
   return (
     <main className={styles.shell}>
@@ -40,15 +62,21 @@ export function ChatApp() {
         </button>
       </header>
       <p className={styles.notice}>AI analyst · Conversations are saved on this server. Relevant history and query evidence are sent to the AI provider.</p>
-      <section className={styles.conversation} aria-label="Conversation">
-        {snapshot && snapshot.turns.length > 0 && (
-          <ChatMessages snapshot={snapshot} onChoice={choice => { void controller.sendMessage(choice); }} disabled={disabled} />
-        )}
-        {snapshot && snapshot.turns.length === 0 && !disabled && (
-          <ChatWelcome onSelect={question => { void controller.sendMessage(question); }} />
-        )}
-        {indication && <p role="status">{indication}</p>}
-        <div ref={endRef} />
+      <section
+        ref={conversationRef}
+        className={styles.conversation}
+        aria-label="Conversation"
+        onScroll={handleConversationScroll}
+      >
+        <div className={styles.conversationContent}>
+          {snapshot && snapshot.turns.length > 0 && (
+            <ChatMessages snapshot={snapshot} onChoice={choice => { void controller.sendMessage(choice); }} disabled={choicesDisabled} />
+          )}
+          {snapshot && snapshot.turns.length === 0 && !choicesDisabled && (
+            <ChatWelcome onSelect={question => { void controller.sendMessage(question); }} />
+          )}
+          {indication && <p role="status">{indication}</p>}
+        </div>
       </section>
       <footer className={styles.footer}>
         {state.storageError && <p className={styles.storageError} role="status">{state.storageError}</p>}
@@ -63,11 +91,16 @@ export function ChatApp() {
             <button className={styles.secondaryButton} onClick={controller.reviewRecovery}>Review before sending</button>
           </div>
         )}
-        {!disabled && canRetry(snapshot) && (
+        {!choicesDisabled && canRetry(snapshot) && (
           <button className={styles.secondaryButton} onClick={() => { void controller.retry(); }}>Retry analysis</button>
         )}
         <ChatComposer key={state.conversationKey} draft={state.draft} onDraftChange={controller.setDraft}
-          onSend={() => { void controller.sendMessage(); }} disabled={disabled} />
+          onSend={() => { void controller.sendMessage(); }}
+          onCancel={controller.cancel}
+          inputDisabled={inputDisabled}
+          canSend={!choicesDisabled}
+          requestActive={state.requestActive}
+          cancelling={state.cancelling} />
         <p className={styles.caption}>GA4 demo dataset · Nov 1, 2020 – Jan 31, 2021</p>
       </footer>
     </main>

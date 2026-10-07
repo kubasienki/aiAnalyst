@@ -14,6 +14,8 @@ export type ChatState = {
   recovery: PendingOperation | null;
   conversationKey: number;
   online: boolean;
+  requestActive: boolean;
+  cancelling: boolean;
 };
 
 const initialState: ChatState = {
@@ -26,6 +28,8 @@ const initialState: ChatState = {
   recovery: null,
   conversationKey: 0,
   online: true,
+  requestActive: false,
+  cancelling: false,
 };
 
 export function latestAttempt(snapshot: ConversationSnapshot | null): DisplayAttempt | undefined {
@@ -112,7 +116,7 @@ export class ChatController {
     if (this.pending) {
       const accepted = snapshot.turns.some(turn => turn.attempts.some(attempt => attempt.clientMessageId === this.pending?.clientMessageId));
       if (accepted) {
-        if (this.pending.kind === "message") {
+        if (this.pending.kind === "message" && this.state.draft === this.pending.message) {
           this.update({ draft: "" });
         }
         this.clearPending();
@@ -217,6 +221,14 @@ export class ChatController {
     this.update({ draft });
   };
 
+  cancel = (): void => {
+    if (!this.activePost || this.state.cancelling) {
+      return;
+    }
+    this.update({ cancelling: true });
+    this.activePost.abort();
+  };
+
   private handleEvent(event: ChatStreamEvent, operation: PendingOperation): void {
     if (event.runId && event.kind === "progress") {
       const current = latestAttempt(this.state.snapshot);
@@ -231,7 +243,8 @@ export class ChatController {
       if (!attempt) {
         throw new Error("The stream returned a different submission.");
       }
-      if (this.applySnapshot(event.snapshot) && event.kind === "accepted" && operation.kind === "message") {
+      if (this.applySnapshot(event.snapshot) && event.kind === "accepted" && operation.kind === "message"
+        && this.state.draft === operation.message) {
         this.update({ draft: "" });
       }
     } else if (event.kind === "error") {
@@ -254,7 +267,15 @@ export class ChatController {
     const controller = new AbortController();
     this.pending = operation;
     this.activePost = controller;
-    this.update({ phase: "submitting", recovery: null, error: null, storageError: null, progress: "thinking" });
+    this.update({
+      phase: "submitting",
+      recovery: null,
+      error: null,
+      storageError: null,
+      progress: "thinking",
+      requestActive: true,
+      cancelling: false,
+    });
     try {
       await this.dependencies.api.submit(operation, controller.signal, event => {
         if (this.isCurrent(generation) && this.activePost === controller) {
@@ -279,6 +300,7 @@ export class ChatController {
       if (this.activePost === controller) {
         this.activePost = null;
         await this.sync();
+        this.update({ requestActive: false, cancelling: false });
       }
     }
   }

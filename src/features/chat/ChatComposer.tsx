@@ -6,13 +6,17 @@ type ChatComposerProps = {
   draft: string;
   onDraftChange: (draft: string) => void;
   onSend: () => void;
-  disabled: boolean;
+  onCancel: () => void;
+  inputDisabled: boolean;
+  canSend: boolean;
+  requestActive: boolean;
+  cancelling: boolean;
 };
 
-export function ChatComposer({ draft, onDraftChange, onSend, disabled }: ChatComposerProps) {
+export function ChatComposer({ draft, onDraftChange, onSend, onCancel, inputDisabled, canSend, requestActive, cancelling }: ChatComposerProps) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || !draft.trim()) {
+    if (!canSend || requestActive || !draft.trim()) {
       return;
     }
     // Acceptance, rather than clicking Send, clears the draft.
@@ -37,12 +41,25 @@ export function ChatComposer({ draft, onDraftChange, onSend, disabled }: ChatCom
         placeholder="How did revenue change from November to December?"
         maxLength={MAX_USER_MESSAGE_LENGTH}
         rows={3}
-        disabled={disabled}
+        disabled={inputDisabled}
         aria-describedby="composer-hint"
       />
       <div className={styles.composerActions}>
         <span id="composer-hint">Enter to send · Shift + Enter for a new line</span>
-        <button className={styles.primaryButton} type="submit" disabled={disabled || !draft.trim()}>Send message</button>
+        {requestActive ? (
+          <button
+            className={`${styles.primaryButton} ${styles.cancelButton}`}
+            type="button"
+            onClick={onCancel}
+            disabled={cancelling}
+            aria-label={cancelling ? "Cancelling response" : "Cancel response"}
+            title={cancelling ? "Cancelling response" : "Cancel response"}
+          >
+            <span className={styles.stopIcon} aria-hidden="true" />
+          </button>
+        ) : (
+          <button className={styles.primaryButton} type="submit" disabled={!canSend || !draft.trim()}>Send</button>
+        )}
       </div>
     </form>
   );
