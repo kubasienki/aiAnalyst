@@ -18,7 +18,7 @@ export function createOpenRouterAgentModel(
         {
           signal: request.signal,
           deadline: request.deadline,
-          onTrace: request.recordTrace ? async (trace, response) => {
+          onTrace: request.recordTrace ? async (trace, response, signal) => {
             await request.recordTrace?.({
               requestBody: jsonValueSchema.parse(body),
               responseBody: trace.responseBody,
@@ -28,7 +28,7 @@ export function createOpenRouterAgentModel(
               startedAt: trace.startedAt,
               finishedAt: trace.finishedAt,
               ...(response?.usage ? { usage: response.usage } : {}),
-            });
+            }, signal);
           } : undefined,
         },
         envelope => normalizeResponse(envelope, config.model, body.model),

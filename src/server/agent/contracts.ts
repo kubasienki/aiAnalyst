@@ -79,7 +79,7 @@ export type ModelRequest = {
   deadline: number;
   signal: AbortSignal;
   // Internal persistence hook. Provider adapters must not serialize it.
-  recordTrace?: (trace: ModelCallTrace) => Promise<void>;
+  recordTrace?: (trace: ModelCallTrace, signal: AbortSignal) => Promise<void>;
 };
 
 export type ModelCallTrace = {
@@ -91,6 +91,15 @@ export type ModelCallTrace = {
   startedAt: number;
   finishedAt: number;
   usage?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; reasoningTokens?: number };
+};
+
+export type ToolCallTrace = {
+  name: string;
+  argumentsValue: JsonValue;
+  result: JsonValue | null;
+  startedAt: number;
+  finishedAt: number;
+  error?: string;
 };
 
 export type ModelResponse = {

@@ -1,10 +1,10 @@
 import "server-only";
 import { jsonValueSchema } from "../contracts/json";
-import { ConversationRepositoryError } from "../conversations/repository";
-import { ContextError } from "../context/contracts";
 import { recoverableToolErrorSchema, type FailureRepeatPolicy, type ModelRequest, type RegisteredTool } from "./contracts";
 import { ModelError } from "./errors";
 import { createAgentExecution } from "./execution";
+import { reportSafely } from "../observability/reporting";
+import { createToolTraceRecorder } from "./tracing";
 import { errorContent, resolveAction } from "./actions";
 import { createToolRegistry, limitsSchema, validateInitialMessages, validateResponse } from "./runner-validation";
 import {
@@ -21,19 +21,19 @@ function normalizeFailure(error: unknown): AgentRunnerError {
   }
   if (error instanceof ModelError) {
     switch (error.code) {
-      case "cancelled": case "deadline": case "timeout": case "configuration": case "context_limit":
+      case "cancelled":
+      case "deadline":
+      case "timeout":
+      case "configuration":
+      case "context_limit":
         return new AgentRunnerError(error.code, error.message);
-      case "invalid_request": case "invalid_response": case "replay_mismatch":
+      case "invalid_request":
+      case "invalid_response":
+      case "replay_mismatch":
         return new AgentRunnerError("protocol", "The model interaction could not be continued safely.");
       default:
         return new AgentRunnerError("provider", "The AI provider could not complete the attempt.");
     }
-  }
-  if (error instanceof ContextError) {
-    if (error.code === "context_limit" || error.code === "configuration") {
-      return new AgentRunnerError(error.code, error.message);
-    }
-    return new AgentRunnerError("protocol", "The model context could not be continued safely.");
   }
   return new AgentRunnerError("internal", "The agent attempt could not be completed.");
 }
@@ -42,14 +42,8 @@ function diagnosticOrigin(error: unknown): AgentDiagnostic["origin"] {
   if (error instanceof ModelError) {
     return { boundary: "model", category: error.code };
   }
-  if (error instanceof ContextError) {
-    return { boundary: "context", category: error.code };
-  }
-  if (error instanceof AgentRunnerError && error.code === "persistence") {
-    return {
-      boundary: "checkpoint",
-      category: error.cause instanceof ConversationRepositoryError ? error.cause.code : "write_failed",
-    };
+  if (error instanceof AgentRunnerError) {
+    return error.origin;
   }
   return undefined;
 }
@@ -76,6 +70,18 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
       const generatedCallIds = new Set<string>();
       execution = createAgentExecution(input.signal, input.deadline);
       const activeExecution = execution;
+      const recordToolTrace = createToolTraceRecorder({
+        signal: activeExecution.signal,
+        deadline: input.deadline,
+        record: input.recordToolCall,
+        reportFailure: category => reportSafely(dependencies.reportFailure, {
+          category,
+          phase: "tool",
+          modelRequests: statistics.modelRequests,
+          toolExecutions: statistics.toolExecutions,
+          elapsedMs: Date.now() - startedAt,
+        }),
+      });
 
       function availableTools(): RegisteredTool<TContext, TOutcome, TArtifact>[] {
         const terminalOnly = statistics.modelRequests >= limits.maxModelRequests - 1;
@@ -109,7 +115,13 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
           // the caller returns its outcome even if cancellation arrived mid-write.
           await input.checkpoint(event);
         } catch (cause) {
-          throw new AgentRunnerError("persistence", "The execution checkpoint could not be saved.", { cause });
+          if (cause instanceof AgentRunnerError && cause.code === "persistence") {
+            throw cause;
+          }
+          throw new AgentRunnerError("persistence", "The execution checkpoint could not be saved.", {
+            cause,
+            origin: { boundary: "checkpoint", category: "write_failed" },
+          });
         }
       }
 
@@ -173,6 +185,11 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
         phase = "tool";
         statistics.toolExecutions++;
         const toolStartedAt = Date.now();
+        const traceFields = {
+          name: call.name,
+          argumentsValue: action.argumentsValue,
+          startedAt: toolStartedAt,
+        };
         let result: Awaited<ReturnType<typeof action.tool.execute>>;
         try {
           result = await activeExecution.wait(action.tool.execute(action.argumentsValue, {
@@ -188,23 +205,15 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
             },
           }));
         } catch (error) {
-          await input.recordToolCall?.({
-            name: call.name,
-            argumentsValue: jsonValueSchema.parse(action.argumentsValue),
+          await recordToolTrace({
+            ...traceFields,
             result: null,
-            startedAt: toolStartedAt,
             finishedAt: Date.now(),
             error: error instanceof AgentRunnerError ? error.code : "tool_failed",
           });
           throw error;
         }
-        await input.recordToolCall?.({
-          name: call.name,
-          argumentsValue: jsonValueSchema.parse(action.argumentsValue),
-          result: jsonValueSchema.parse(JSON.parse(JSON.stringify(result))),
-          startedAt: toolStartedAt,
-          finishedAt: Date.now(),
-        });
+        const completedTrace = { ...traceFields, result, finishedAt: Date.now() };
         activeExecution.check();
         if (result.kind === "terminal") {
           if (action.tool.role !== "terminal") {
@@ -212,6 +221,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
           }
           const acknowledgment = jsonValueSchema.parse(result.acknowledgment);
           await checkpoint({ kind: "terminal", callId: call.callId, acknowledgment, outcome: result.outcome });
+          await recordToolTrace(completedTrace);
           statistics.elapsedMs = Date.now() - startedAt;
           return { kind: "terminal", outcome: result.outcome, statistics };
         }
@@ -224,12 +234,14 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
           statistics.recoverableErrors++;
           failedActions.set(action.fingerprint, repeatPolicy);
           await recordResult({ kind: "tool_result", callId: call.callId, content: errorContent(error), artifact: result.artifact });
+          await recordToolTrace(completedTrace);
           continue;
         }
         if (result.kind !== "continue" || action.tool.role !== "continuing") {
           throw new AgentRunnerError("internal", "The tool returned an invalid execution outcome.");
         }
         await recordResult({ kind: "tool_result", callId: call.callId, content: jsonValueSchema.parse(result.content), artifact: result.artifact });
+        await recordToolTrace(completedTrace);
         // Only durable successful work counts as progress. Repairs and failed
         // tools cannot unlock an otherwise identical failed action.
         for (const [fingerprint, repeatPolicy] of failedActions) {

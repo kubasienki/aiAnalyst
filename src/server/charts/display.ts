@@ -2,6 +2,7 @@ import "server-only";
 import type { Answer } from "../../shared/analysis";
 import type { ChartDisplayResult } from "../../shared/charts";
 import { prepareAnswerCharts, type ChartEvidenceLookup } from "./prepare";
+import { reportSafely } from "../observability/reporting";
 
 export function projectAnswerCharts(
   answer: Answer,
@@ -14,10 +15,10 @@ export function projectAnswerCharts(
     if (result.ok) {
       return result.charts;
     }
-    reportFailure(result.error.code);
+    reportSafely(reportFailure, result.error.code);
   } catch {
     // A display failure must not undo an already committed analytical answer.
-    reportFailure("chart_projection");
+    reportSafely(reportFailure, "chart_projection");
   }
   return specs.map(spec => ({
     kind: "unavailable",

@@ -2,6 +2,8 @@
 
 Next.js App Router analytics assistant using a bounded agent loop, OpenRouter and guarded BigQuery queries.
 
+See the [C4 architecture documentation](docs/architecture/README.md) for system context, containers, components, code relationships, runtime flows, persistence, and deployment requirements.
+
 ## Local development
 
 Use Node.js 22 or newer and npm.
@@ -165,7 +167,11 @@ Checkpoints store assistant replies before dispatch, paired tool results before 
 
 The caller owns the deadline and initial cancellation signal. The runner derives a shared abort signal for model/tool work, stops waiting for uncooperative operations, consumes late rejections, and checks the clock after awaits. Started persistence checkpoints finish before returning; a successful terminal checkpoint is the commit point and remains successful if cancellation or deadline expiry occurs during its write. Other checkpoint failures stop execution. Checkpoint adapters must complete or reject started writes; an arbitrary stalled callback is outside the runner’s execution bound. Diagnostics retain originating model, context, and checkpoint categories alongside phases, counters, and duration, never raw errors or model contents.
 
-The conversation service connects repository operations to awaited runner checkpoints and finalizes failed, cancelled, and interrupted attempts. `createAnalysisService()` supplies the SQL, clarification, and answer tools. Fake-model tests cover orchestration without cloud credentials or live API requests.
+The conversation service connects repository operations to awaited runner checkpoints and finalizes failed, cancelled, and interrupted attempts. Conversation policies own admission, retry eligibility, and finalization decisions; the SQLite adapter evaluates them using facts read inside its transactions. The analysis recording adapter maps checkpoints and translates storage failures into agent-owned error provenance. Composition similarly translates context preflight errors, keeping the generic runner independent of conversation and context implementations.
+
+Debug traces are best-effort and separate from mandatory analytical checkpoints. Each callback receives a cancellation signal and is awaited for at most 100 ms or the remaining execution deadline. Trace errors and late rejections cannot replace model/tool outcomes; successful tool traces follow their checkpoint, and terminal acceptance survives tracing failures. Writers must check the supplied signal before accessing a repository after asynchronous work. SQLite writes are synchronous, so this ceiling does not bound driver lock waits. Safe diagnostic reporters are protected from throwing, including during conversation recovery and chart fallback. Debugger envelopes are runtime-validated, while arbitrary payloads and malformed JSON remain inspectable; capture can be incomplete.
+
+`createAnalysisService()` supplies the SQL, clarification, and answer tools. Fake-model tests cover orchestration without cloud credentials or live API requests.
 
 ## Conversation service and browser integration
 

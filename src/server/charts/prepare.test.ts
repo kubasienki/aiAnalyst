@@ -194,6 +194,13 @@ describe("chart evidence preparation", () => {
 });
 
 describe("chart display failures", () => {
+  it("returns unavailable charts when reporting their failure also throws", () => {
+    const answer = answerSchema.parse({ narrative: "Saved finding", assumptions: [], limitations: [], evidenceIds: [resultId], completeness: "complete", charts: [specs[0]] });
+    const report = () => { throw new Error("reporter unavailable"); };
+    expect(projectAnswerCharts(answer, () => undefined, report)[0].kind).toBe("unavailable");
+    expect(projectAnswerCharts(answer, () => { throw new Error("projection unavailable"); }, report)[0].kind).toBe("unavailable");
+  });
+
   it("keeps the answer independent of missing evidence and reports safe diagnostics", () => {
     const report = vi.fn();
     const answer = answerSchema.parse({ narrative: "Saved finding", assumptions: [], limitations: [], evidenceIds: [resultId], completeness: "complete", charts: [specs[0]] });

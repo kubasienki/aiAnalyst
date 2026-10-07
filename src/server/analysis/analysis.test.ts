@@ -1,3 +1,5 @@
+import { AgentRunnerError } from "../agent/runner-contracts";
+import { createAgentPreflight } from "../config/agent-preflight";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -90,7 +92,7 @@ function tool(name: string, executeQuery: QueryExecutor = vi.fn<QueryExecutor>()
 }
 
 function analyzeWith(model: AgentModel, executeQuery: QueryExecutor, preflight: (request: ModelRequest) => void = () => undefined) {
-  return createAnalysisService({ executeQuery, runAgent: createAgentRunner({ model, preflight }) });
+  return createAnalysisService({ executeQuery, runAgent: createAgentRunner({ model, preflight: createAgentPreflight(preflight) }) });
 }
 
 describe("analytical tools", () => {
@@ -141,7 +143,7 @@ describe("analytical tools", () => {
   it("persists oversized evidence without supplying rows and exactly replays feedback", async () => {
     const result = evidence();
     const invocation = toolInvocation();
-    invocation.checkContinuation = vi.fn().mockImplementationOnce(() => { throw new ContextError("context_limit", "Full payload too large"); });
+    invocation.checkContinuation = vi.fn().mockImplementationOnce(() => { throw new AgentRunnerError("context_limit", "Full payload too large"); });
     const execute: QueryExecutor = vi.fn<QueryExecutor>(async () => ({ ok: true, evidence: result }));
     const output = await tool("run_sql", execute).execute({ intent: "December revenue", sql: "SELECT 1" }, invocation);
     expect(output).toMatchObject({ kind: "error", repeatPolicy: "unchanged_arguments", artifact: { delivery: "unavailable" } });

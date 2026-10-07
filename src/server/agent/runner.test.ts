@@ -4,10 +4,10 @@ import { z } from "zod";
 import { ContextError } from "../context/contracts";
 import { createOpenRouterRequestMeasurer } from "../adapters/openrouter/request-measurer";
 import { measureContextRequest } from "../context/budget";
-import { ConversationRepositoryError } from "../conversations/repository";
+import { createAgentPreflight } from "../config/agent-preflight";
 import { ModelError } from "./errors";
 import type { AgentModel, ModelRequest, ModelResponse, RegisteredTool, ToolExecution, ToolInvocationContext } from "./contracts";
-import type { AgentCheckpoint, AgentRunInput } from "./runner-contracts";
+import { AgentRunnerError, type AgentCheckpoint, type AgentRunInput } from "./runner-contracts";
 import { createAgentRunner } from "./runner";
 import { registerTool } from "./tool-registration";
 
@@ -75,7 +75,7 @@ function setup(responses: ModelResponse[] = [action()]) {
     tools: tools(), applicationContext: { attempts: 0 }, signal: new AbortController().signal,
     deadline: Date.now() + 120_000, checkpoint,
   };
-  const run = createAgentRunner({ model: { complete }, preflight, reportFailure });
+  const run = createAgentRunner({ model: { complete }, preflight: createAgentPreflight(preflight), reportFailure });
   return { run, input, complete, preflight, reportFailure, checkpoints, checkpoint };
 }
 
@@ -85,6 +85,36 @@ afterEach(() => {
 });
 
 describe("bounded agent runner", () => {
+  it("commits the terminal checkpoint before best-effort tool traces and tolerates trace failures", async () => {
+    const f = setup();
+    f.input.recordToolCall = vi.fn(async () => {
+      expect(f.checkpoints.at(-1)?.kind).toBe("terminal");
+      throw new Error("private trace storage failure");
+    });
+    expect(await f.run(f.input)).toMatchObject({ kind: "terminal" });
+    expect(f.reportFailure).toHaveBeenCalledWith(expect.objectContaining({ category: "trace_failed" }));
+    expect(JSON.stringify(f.reportFailure.mock.calls)).not.toContain("private");
+  });
+
+  it("retains an accepted outcome when a stalled trace reaches the run deadline", async () => {
+    vi.useFakeTimers();
+    const f = setup();
+    f.input.deadline = Date.now() + 50;
+    f.input.recordToolCall = vi.fn(() => new Promise<void>(() => {}));
+    const pending = f.run(f.input);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await pending).toMatchObject({ kind: "terminal" });
+    expect(f.checkpoints.map(event => event.kind)).toEqual(["assistant", "terminal"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not replace a tool failure when its trace reporter also fails", async () => {
+    const f = setup([action("query", '{"sql":"SELECT 1"}')]);
+    f.input.tools = tools(async () => { throw new AgentRunnerError("protocol", "Tool protocol failed"); });
+    f.input.recordToolCall = vi.fn(async () => { throw new Error("trace failed"); });
+    expect(await f.run(f.input)).toMatchObject({ kind: "failure", error: { code: "protocol" } });
+  });
+
   it("reports next-request continuation capability including the terminal-only reservation", async () => {
     const f = setup([
       ...Array.from({ length: 5 }, () => action("query", '{"sql":"SELECT 1"}')),
@@ -467,7 +497,7 @@ describe("bounded agent runner", () => {
 
   it("preserves checkpoint categories without exposing database errors", async () => {
     const f = setup();
-    f.checkpoint.mockRejectedValue(new ConversationRepositoryError("unavailable", "secret database details"));
+    f.checkpoint.mockRejectedValue(new AgentRunnerError("persistence", "Checkpoint failed", { origin: { boundary: "checkpoint", category: "unavailable" }, cause: new Error("secret database details") }));
     expect(await f.run(f.input)).toMatchObject({ kind: "failure", error: { code: "persistence" } });
     expect(f.reportFailure).toHaveBeenCalledWith(expect.objectContaining({
       category: "persistence", phase: "checkpoint", origin: { boundary: "checkpoint", category: "unavailable" },

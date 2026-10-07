@@ -7,6 +7,7 @@ import { createAgentModel } from "./agent-model";
 import { readContextBudget } from "./context";
 import { createDataLayer } from "./data-layer";
 import { readOpenRouterConfig } from "./openrouter";
+import { createAgentPreflight } from "./agent-preflight";
 
 // No database opens at import or construction. The conversation caller supplies
 // built context and an awaited persistence callback for each invocation.
@@ -18,9 +19,7 @@ export function createAnalyst() {
     executeQuery: createDataLayer(),
     runAgent: createAgentRunner({
       model: createAgentModel(),
-      preflight(request) {
-        measureContextRequest(request, measurer, budget);
-      },
+      preflight: createAgentPreflight(request => measureContextRequest(request, measurer, budget)),
     }),
   });
 }

@@ -10,6 +10,7 @@ import { createAnalysisService } from "../analysis/service";
 import { ANALYSIS_TOOL_DESCRIPTIONS } from "../analysis/contracts";
 import { analysisMetadataFixture } from "../analysis/analysis.fixtures";
 import { createOpenRouterRequestMeasurer } from "../adapters/openrouter/request-measurer";
+import { createOpenRouterAgentModel } from "../adapters/openrouter/agent-model";
 import { openConversationRepository } from "../adapters/persistence/repository";
 import { createContextBuilder } from "../context/builder";
 import { ContextError } from "../context/contracts";
@@ -117,6 +118,50 @@ async function execute(admitted: AdmittedSubmission, signal = new AbortControlle
 }
 
 describe("conversation application workflow", () => {
+  it("finalizes a failed context even when diagnostic reporting throws", async () => {
+    const f = await fixture();
+    const service = createConversationService({
+      repository: f.repository,
+      prepareExecution: () => ({
+        ...prepared(f.model),
+        buildContext() { throw new ContextError("context_limit", "Oversized context"); },
+      }),
+      reportFailure() { throw new Error("diagnostic sink unavailable"); },
+    });
+    const admitted = await service.submitMessage(f.initial.conversationId, f.input);
+    const events = await execute(admitted);
+    expect(events.at(-1)).toMatchObject({ kind: "error" });
+    expect((await f.repository.loadHistory(f.initial.conversationId)).runs[0]).toMatchObject({
+      status: "failed", outcome: { kind: "failure", error: { code: "context_limit" } },
+    });
+  });
+
+  it("accepts and persists answers even when all debug trace writes fail", async () => {
+    const f = await fixture();
+    vi.spyOn(f.repository, "recordAgentTrace").mockRejectedValue(new Error("debug storage unavailable"));
+    const admitted = await f.service.submitMessage(f.initial.conversationId, f.input);
+    expect((await execute(admitted)).at(-1)).toMatchObject({ kind: "answer" });
+    expect((await f.repository.loadHistory(f.initial.conversationId)).runs[0].status).toBe("completed");
+  });
+
+  it("persists provider usage without optional fields and records tool traces after acceptance", async () => {
+    const provider = createOpenRouterAgentModel({ apiKey: "fake-key", model: "test/model" }, async () => Response.json({
+      model: "test/model",
+      choices: [{ finish_reason: "tool_calls", message: {
+        role: "assistant", content: null,
+        tool_calls: [{ id: "finish-1", type: "function", function: { name: "finish_answer", arguments: JSON.stringify(answer()) } }],
+      } }],
+      usage: { prompt_tokens: 12, completion_tokens: 3 },
+    }));
+    const f = await fixture(provider.complete);
+    const record = vi.spyOn(f.repository, "recordAgentTrace");
+    const admitted = await f.service.submitMessage(f.initial.conversationId, f.input);
+    expect((await execute(admitted)).at(-1)).toMatchObject({ kind: "answer" });
+    expect(record.mock.calls.map(([, trace]) => trace.kind)).toEqual(["model_call", "tool_call"]);
+    expect(record.mock.calls[0][1].payload).toMatchObject({ usage: { inputTokens: 12, outputTokens: 3 } });
+    expect((await f.repository.loadHistory(f.initial.conversationId)).runs[0].status).toBe("completed");
+  });
+
   it("persists a final answer before publishing, survives reopen, and excludes protocol data", async () => {
     const f = await fixture();
     const admitted = await f.service.submitMessage(f.initial.conversationId, f.input);

@@ -2,6 +2,21 @@ import "server-only";
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { readPersistenceConfig } from "../config/persistence";
+import { z } from "zod";
+import {
+  debugRunSummarySchema, debugRunMetadataSchema, debugEventSchema, debugEvidenceSchema, debugTraceSchema,
+  type DebugRunSummary, type DebugRun,
+} from "../../shared/agent-debug";
+
+const summaryRowSchema = debugRunSummarySchema.omit({ versions: true, outcome: true, userEvent: true }).extend({
+  versionsJson: z.string(),
+  outcomeJson: z.string().nullable(),
+  userEventJson: z.string().nullable(),
+});
+const runRowSchema = debugRunMetadataSchema.omit({ versions: true, outcome: true, request: true });
+const eventRowSchema = debugEventSchema.omit({ payload: true });
+const evidenceRowSchema = debugEvidenceSchema.omit({ data: true });
+const traceRowSchema = debugTraceSchema.omit({ payload: true });
 
 function requireLocalDebugMode(): void {
   if (process.env.NODE_ENV === "production") {
@@ -26,7 +41,7 @@ function parseJson(value: string): unknown {
   }
 }
 
-export function listDebugRuns(): unknown[] {
+export function listDebugRuns(): DebugRunSummary[] {
   const database = openReadOnlyDatabase();
   try {
     return database.prepare(`
@@ -36,7 +51,7 @@ export function listDebugRuns(): unknown[] {
         (SELECT payload_json FROM conversation_events e WHERE e.run_id = r.id AND json_extract(e.payload_json, '$.kind') = 'user_message' ORDER BY sequence LIMIT 1) AS userEventJson
       FROM runs r ORDER BY r.created_at DESC LIMIT 200
     `).all().map(row => {
-      const record = row as Record<string, unknown>;
+      const record = summaryRowSchema.parse(row);
       return {
         id: record.id,
         conversationId: record.conversationId,
@@ -44,9 +59,9 @@ export function listDebugRuns(): unknown[] {
         createdAt: record.createdAt,
         finishedAt: record.finishedAt,
         retryOfRunId: record.retryOfRunId,
-        versions: parseJson(String(record.versionsJson)),
-        outcome: record.outcomeJson === null ? null : parseJson(String(record.outcomeJson)),
-        userEvent: record.userEventJson === null ? null : parseJson(String(record.userEventJson)),
+        versions: parseJson(record.versionsJson),
+        outcome: record.outcomeJson === null ? null : parseJson(record.outcomeJson),
+        userEvent: record.userEventJson === null ? null : parseJson(record.userEventJson),
       };
     });
   } finally {
@@ -54,31 +69,32 @@ export function listDebugRuns(): unknown[] {
   }
 }
 
-export function readDebugRun(runId: string): unknown {
+export function readDebugRun(runId: string): DebugRun | null {
   const database = openReadOnlyDatabase();
   try {
-    const run = database.prepare(`
+    const runRow = database.prepare(`
       SELECT id, conversation_id AS conversationId, user_message_event_id AS userMessageEventId,
         retry_of_run_id AS retryOfRunId, request_json AS requestJson, status, deadline,
         versions_json AS versionsJson, created_at AS createdAt, finished_at AS finishedAt,
         outcome_json AS outcomeJson
       FROM runs WHERE id = ?
-    `).get(runId) as Record<string, unknown> | undefined;
-    if (!run) {
+    `).get(runId);
+    if (!runRow) {
       return null;
     }
+    const run = runRowSchema.parse(runRow);
     const events = database.prepare(`
       SELECT id, sequence, payload_version AS payloadVersion, payload_json AS payloadJson, created_at AS createdAt
       FROM conversation_events WHERE run_id = ? ORDER BY sequence
     `).all(runId).map(row => {
-      const event = row as Record<string, unknown>;
-      return { ...event, payload: parseJson(String(event.payloadJson)) };
+      const event = eventRowSchema.parse(row);
+      return { ...event, payload: parseJson(event.payloadJson) };
     });
     const evidence = database.prepare(`
       SELECT id, payload_json AS payloadJson, created_at AS createdAt FROM query_evidence WHERE run_id = ? ORDER BY created_at, id
     `).all(runId).map(row => {
-      const item = row as Record<string, unknown>;
-      return { ...item, data: parseJson(String(item.payloadJson)) };
+      const item = evidenceRowSchema.parse(row);
+      return { ...item, data: parseJson(item.payloadJson) };
     });
     const traceTable = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_traces'").get();
     const traceRows = traceTable ? database.prepare(`
@@ -86,20 +102,22 @@ export function readDebugRun(runId: string): unknown {
       FROM agent_traces WHERE run_id = ? ORDER BY sequence
     `).all(runId) : [];
     const traces = traceRows.map(row => {
-      const trace = row as Record<string, unknown>;
-      return { ...trace, payload: parseJson(String(trace.payloadJson)) };
+      const trace = traceRowSchema.parse(row);
+      return { ...trace, payload: parseJson(trace.payloadJson) };
     });
     return {
       run: {
         ...run,
-        request: parseJson(String(run.requestJson)),
-        versions: parseJson(String(run.versionsJson)),
-        outcome: run.outcomeJson === null ? null : parseJson(String(run.outcomeJson)),
+        request: parseJson(run.requestJson),
+        versions: parseJson(run.versionsJson),
+        outcome: run.outcomeJson === null ? null : parseJson(run.outcomeJson),
       },
       events,
       evidence,
       traces,
-      contextCapture: traces.length > 0 ? "exact provider request bodies are stored per model call" : "historical context is represented by stored events and evidence; exact provider request bodies were not captured",
+      contextCapture: traces.some(trace => trace.kind === "model_call")
+        ? "Available model traces contain exact provider request bodies; best-effort capture may omit some calls."
+        : "Historical context is represented by stored events and evidence; no exact provider request bodies were captured.",
     };
   } finally {
     database.close();

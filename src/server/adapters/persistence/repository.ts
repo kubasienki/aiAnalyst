@@ -10,7 +10,9 @@ import { conversationRevision, revisionSchema } from "../../../shared/conversati
 import { assistantMessageSchema, type ToolCall } from "../../agent/contracts";
 import { inspectMessageSequence, type MessageSequenceEntry } from "../../agent/message-sequence";
 import { transcriptSequence } from "../../conversations/transcript";
-import { jsonValueSchema, type JsonValue } from "../../contracts/json";
+import { jsonValueSchema } from "../../contracts/json";
+import { canonicalJson } from "../../contracts/json-equality";
+import { assertRunAdmission, assertRetryEligibility, checkRunFinalization, ConversationPolicyViolation } from "../../conversations/policies";
 import {
   conversationEventSchema, conversationSchema, evidenceInputSchema, eventPayloadSchema,
   identitySchema, outcomeStatus, runOutcomeSchema, runSchema, runVersionsSchema,
@@ -62,22 +64,6 @@ function readRecord<T>(schema: z.ZodType<T>, value: unknown): T {
   }
 }
 
-function sortJson(value: JsonValue): JsonValue {
-  if (Array.isArray(value)) {
-    return value.map(sortJson);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortJson(value[key])]));
-  }
-  return value;
-}
-
-function canonicalJson(value: unknown): string {
-  // Parsed contracts are JSON-compatible; serialization removes optional undefined fields.
-  const normalized: unknown = JSON.parse(JSON.stringify(value));
-  return JSON.stringify(sortJson(jsonValueSchema.parse(normalized)));
-}
-
 export function openConversationRepository(options: Options): ConversationRepository {
   let connection: Database.Database;
   try {
@@ -122,6 +108,12 @@ export function openConversationRepository(options: Options): ConversationReposi
     try {
       return operation();
     } catch (cause) {
+      if (cause instanceof ConversationPolicyViolation) {
+        throw new ConversationRepositoryError("conflict", cause.message, {
+          cause,
+          conflictReason: cause.reason,
+        });
+      }
       if (cause instanceof ConversationRepositoryError) {
         throw cause;
       }
@@ -302,18 +294,16 @@ export function openConversationRepository(options: Options): ConversationReposi
       .where(eq(runs.conversationId, input.conversationId)).get()?.count ?? 0;
     const lastSequence = db.select({ sequence: sql<number>`coalesce(max(${events.sequence}), 0)` }).from(events)
       .where(eq(events.conversationId, input.conversationId)).get()?.sequence ?? 0;
-    if (input.expectedRevision !== conversationRevision(runCount, lastSequence)) {
-      conflict("Conversation changed. Review the refreshed history before sending.", "stale_revision");
-    }
-    if (input.deadline <= timestamp) {
-      conflict("A new run needs a future deadline.");
-    }
     const active = db.select({ id: runs.id }).from(runs).where(and(
       eq(runs.conversationId, input.conversationId), eq(runs.status, "running"),
     )).get();
-    if (active) {
-      conflict("This conversation already has an active run.", "active_run");
-    }
+    assertRunAdmission({
+      expectedRevision: input.expectedRevision,
+      currentRevision: conversationRevision(runCount, lastSequence),
+      deadline: input.deadline,
+      now: timestamp,
+      hasActiveRun: active !== undefined,
+    });
     const run: ConversationRun = {
       id: randomUUID(),
       conversationId: input.conversationId,
@@ -352,41 +342,12 @@ export function openConversationRepository(options: Options): ConversationReposi
 
   function finalize(runId: string, input: FinishRunInput, timestamp: number): ConversationRun {
     const run = getRun(runId);
-    if (run.status !== "running") {
-      if (canonicalJson(run.outcome) !== canonicalJson(input.outcome)) {
-        conflict("The run already has a different terminal outcome.");
-      }
-      const recorded = runEvents(runId).filter(event => event.payload.kind === "tool_result");
-      if (input.acknowledgment && !recorded.some(event =>
-        event.payload.kind === "tool_result" && canonicalJson(event.payload.result) === canonicalJson(input.acknowledgment),
-      )) {
-        conflict("The terminal acknowledgment differs from the stored result.");
-      }
+    const decision = checkRunFinalization({ run, events: runEvents(runId), requested: input });
+    if (decision === "already_finished") {
       return run;
-    }
-    if (input.outcome.kind !== "failure") {
-      if (!input.acknowledgment || input.acknowledgment.payload.kind !== "inline") {
-        conflict("An analytical outcome needs an inline terminal-tool acknowledgment.");
-      }
-      const call = findCall(runId, input.acknowledgment.callId);
-      const expectedTool = input.outcome.kind === "answer" ? "finish_answer" : "request_clarification";
-      if (call.name !== expectedTool) {
-        conflict("The terminal tool does not match the outcome.");
-      }
     }
     if (input.acknowledgment) {
       recordResult(run, input.acknowledgment, undefined, timestamp);
-    }
-    if (input.outcome.kind !== "failure") {
-      const history = runEvents(runId);
-      const resolved = new Set(history.flatMap(event =>
-        event.payload.kind === "tool_result" ? [event.payload.result.callId] : [],
-      ));
-      const unfinished = history.some(event => event.payload.kind === "assistant_message"
-        && event.payload.message.toolCalls.some(call => !resolved.has(call.callId)));
-      if (unfinished) {
-        conflict("An analytical outcome cannot leave unfinished tool calls.");
-      }
     }
     appendEvent(run, { kind: "outcome", outcome: input.outcome }, timestamp);
     db.update(runs).set({
@@ -441,12 +402,6 @@ export function openConversationRepository(options: Options): ConversationReposi
           return duplicate;
         }
         const source = getRun(parsed.runId);
-        if (source.conversationId !== parsed.conversationId) {
-          conflict("The retried run belongs to another conversation.", "invalid_retry");
-        }
-        if (!["failed", "cancelled", "interrupted"].includes(source.status)) {
-          conflict("Only a failed, cancelled, or interrupted run can be retried.", "invalid_retry");
-        }
         // Terminal event sequence identifies the latest attempt without relying
         // on timestamps or random UUID ordering. Eventless retries are active.
         const lastEvent = db.select().from(events)
@@ -454,12 +409,12 @@ export function openConversationRepository(options: Options): ConversationReposi
           .orderBy(sql`${events.sequence} desc`).get();
         const activeRun = db.select({ id: runs.id }).from(runs)
           .where(and(eq(runs.conversationId, parsed.conversationId), eq(runs.status, "running"))).get();
-        if (activeRun) {
-          conflict("This conversation already has an active run.", "active_run");
-        }
-        if (lastEvent?.runId !== source.id) {
-          conflict("Only the latest attempt can be retried.", "invalid_retry");
-        }
+        assertRetryEligibility({
+          source,
+          conversationId: parsed.conversationId,
+          latestRunId: lastEvent?.runId,
+          hasActiveRun: activeRun !== undefined,
+        });
         return createRun(parsed, requestJson, source);
       }));
     },
@@ -487,7 +442,8 @@ export function openConversationRepository(options: Options): ConversationReposi
     },
     recordAgentTrace(runId, trace: AgentTraceInput) {
       return perform(() => transaction(() => {
-        const run = requireActiveRun(identitySchema.parse(runId));
+        // Debug capture may follow the terminal checkpoint; it cannot modify outcomes.
+        const run = getRun(identitySchema.parse(runId));
         const latest = db.select({ sequence: sql<number>`coalesce(max(${agentTraces.sequence}), 0)` })
           .from(agentTraces).where(eq(agentTraces.runId, run.id)).get();
         db.insert(agentTraces).values({

@@ -1,11 +1,12 @@
 import "server-only";
 import { isRecord } from "../../../shared/chat";
 import { ModelError } from "../../agent/errors";
+import { captureTrace } from "../../observability/reporting";
 
 export const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export type OpenRouterConfig = { apiKey: string; model: string; maxResponseBytes?: number };
-type FailureCategory = "network" | "http" | "invalid_response" | "completion_error" | "truncated" | "filtered" | "timeout" | "deadline" | "response_limit" | "cleanup_failed";
+type FailureCategory = "network" | "http" | "invalid_response" | "completion_error" | "truncated" | "filtered" | "timeout" | "deadline" | "response_limit" | "cleanup_failed" | "trace_failed" | "trace_timeout";
 
 export type OpenRouterDiagnostic = {
   category: FailureCategory;
@@ -157,7 +158,7 @@ export function createOpenRouterTransport(
 
   return async function complete<T>(
     body: Record<string, unknown>,
-    options: { signal: AbortSignal; deadline?: number; onTrace?: (trace: TransportTrace, result?: T) => Promise<void> },
+    options: { signal: AbortSignal; deadline?: number; onTrace?: (trace: TransportTrace, result: T | undefined, signal: AbortSignal) => Promise<void> },
     normalize: (envelope: CompletionEnvelope) => T,
   ): Promise<T> {
     if (options.signal.aborted) {
@@ -306,14 +307,21 @@ export function createOpenRouterTransport(
       throw new ModelError("provider", "The AI provider could not be reached. Please retry.");
     } finally {
       if (options.onTrace) {
-        await options.onTrace({
-          responseBody: rawResponseBody,
-          status: diagnostic.status ?? null,
-          requestId: diagnostic.requestId,
-          errorCategory: completed ? undefined : diagnostic.category,
-          startedAt,
-          finishedAt: Date.now(),
-        }, completedResult);
+        const onTrace = options.onTrace;
+        const finishedAt = Date.now();
+        await captureTrace({
+          signal: options.signal,
+          deadline: requestDeadline,
+          reportFailure: reportDiagnostic,
+          write: signal => onTrace({
+            responseBody: rawResponseBody,
+            status: diagnostic.status ?? null,
+            requestId: diagnostic.requestId,
+            errorCategory: completed ? undefined : diagnostic.category,
+            startedAt,
+            finishedAt,
+          }, completedResult, signal),
+        });
       }
     }
   };

@@ -1,3 +1,4 @@
+import { createAgentPreflight } from "../config/agent-preflight";
 import { projectConversation } from "../conversations/display";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -145,7 +146,7 @@ async function fixture() {
       visibleEvidenceIds: new Set(context.includedEvidenceIds),
     };
     const runner = createAgentRunner({
-      model: { complete }, preflight: request => { measureContextRequest(request, measurer, budget); },
+      model: { complete }, preflight: createAgentPreflight(request => measureContextRequest(request, measurer, budget)),
     });
     const result = await runner({
       messages: context.messages, tools: registeredTools, applicationContext: state,

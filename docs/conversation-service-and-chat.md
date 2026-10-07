@@ -176,6 +176,40 @@ question/choices in context. Two tabs with the same revision race admission: one
 wins and the other refreshes. Explicit retry links an eligible latest attempt and
 reuses its question. A process crash leaves running state until expiry reconciliation.
 
+## Context size audit
+
+The local SQLite database inspected on 2026-10-07 contained 21 conversations,
+46 runs, 149 events, and 14 evidence records. These are database-wide counts; a
+model request loads history for one conversation only. The largest conversation
+had 9 assistant messages, all replayed as complete interactions. Its persisted
+history and evidence sizes were:
+
+| Component | Stored size | Context contribution |
+| --- | ---: | --- |
+| Provider `reasoning` | 4.4 KB | Replayed on assistant messages. |
+| Provider `reasoning_details` | 28.6 KB | Replayed structured provider data; the database-wide text inside these blocks was only 3.6 KB. |
+| Assistant tool calls and arguments | 20.6 KB | Included SQL intent/query arguments and terminal answer arguments. |
+| Outcomes | 14.1 KB | Includes saved answers and statuses. Failure outcomes are projected to a short status note. |
+| Stored query evidence | 14.8 KB | Includes row results and semantic-guide snapshots; database ownership metadata is not sent. |
+| User messages | 443 B | Replayed user history. |
+| Tool-result events | 1.4 KB | Result references and acknowledgments; visible evidence payloads are counted separately above. |
+
+Across the entire database, assistant messages held about 124 KB of provider
+reasoning fields (20 KB `reasoning` and 104 KB `reasoning_details`) and 36 tool
+calls whose arguments totaled about 56 KB: 17 `run_sql`, 18 `finish_answer`, and
+one clarification call. These database-wide totals are not sent in one request.
+Answer content appears in both the `finish_answer` arguments and the saved
+outcome, so it is represented in multiple replay messages.
+
+These figures are persisted UTF-8 payload sizes, not exact model token counts or
+an exact measurement of the projected request. Projection changes failure
+outcomes, removes database ownership fields from evidence, and adds the fixed
+analyst instructions and tool definitions to every request. The current fallback
+estimator counts each serialized UTF-8 byte as one estimated input token. In this
+snapshot, reasoning replay and tool arguments were the largest history costs;
+user messages were small. The snapshot is local and will change as conversations
+are added.
+
 ## Browser chat layout and controls
 
 The browser chat keeps the header and composer visible within the viewport. The

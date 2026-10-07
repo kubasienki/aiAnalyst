@@ -24,6 +24,16 @@ function asNode(value: unknown): SqlNode {
   return value as SqlNode;
 }
 
+function readNodeArray(value: unknown): unknown[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new DataQueryError("unsupported_sql", "Unsupported SQL list structure.");
+  }
+  return value;
+}
+
 function readIdentifier(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -237,7 +247,7 @@ export function validateSql(sql: unknown): string {
     }
     const scope = new Set(inherited);
     const declared = new Set<string>();
-    for (const entry of (select.with as unknown[] | null) || []) {
+    for (const entry of readNodeArray(select.with)) {
       const cte = asNode(entry);
       const name = readIdentifier(cte.name).toLowerCase();
       if (!/^[a-z_][a-z0-9_]*$/.test(name) || declared.has(name)) {
@@ -249,7 +259,7 @@ export function validateSql(sql: unknown): string {
       scope.add(name);
     }
     validateProjections(select);
-    const sources = (select.from as unknown[] | null) || [];
+    const sources = readNodeArray(select.from);
     const physicalTables = sources.map(asNode).filter(source =>
       typeof source.table === "string" && !scope.has(source.table.toLowerCase()),
     );

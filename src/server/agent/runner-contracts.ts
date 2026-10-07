@@ -1,14 +1,19 @@
 import "server-only";
 import type { JsonValue } from "../contracts/json";
-import type { AgentModel, ModelCallTrace, ModelMessage, ModelRequest, ModelResponse, RegisteredTool } from "./contracts";
+import type { AgentModel, ModelCallTrace, ModelMessage, ModelRequest, ModelResponse, RegisteredTool, ToolCallTrace } from "./contracts";
 
 export type AgentFailureCode = "configuration" | "protocol" | "provider" | "timeout" | "cancelled"
   | "deadline" | "budget_exhausted" | "context_limit" | "persistence" | "internal";
 
+export type AgentFailureOrigin = { boundary: "model" | "context" | "checkpoint"; category: string };
+
 export class AgentRunnerError extends Error {
-  constructor(public readonly code: AgentFailureCode, message: string, options?: ErrorOptions) {
+  public readonly origin?: AgentFailureOrigin;
+
+  constructor(public readonly code: AgentFailureCode, message: string, options?: ErrorOptions & { origin?: AgentFailureOrigin }) {
     super(message, options);
     this.name = "AgentRunnerError";
+    this.origin = options?.origin;
   }
 }
 
@@ -37,15 +42,15 @@ export type AgentRunInput<TContext, TOutcome, TArtifact = never> = {
   // The adapter must complete or reject started writes. The runner deliberately
   // does not race them against cancellation because terminal writes can commit.
   checkpoint(event: AgentCheckpoint<TOutcome, TArtifact>): Promise<void>;
-  recordModelCall?(trace: ModelCallTrace): Promise<void>;
-  recordToolCall?(trace: { name: string; argumentsValue: JsonValue; result: JsonValue | null; startedAt: number; finishedAt: number; error?: string }): Promise<void>;
+  recordModelCall?(trace: ModelCallTrace, signal: AbortSignal): Promise<void>;
+  recordToolCall?(trace: ToolCallTrace, signal: AbortSignal): Promise<void>;
 };
 
 export type RunnerPhase = "configuration" | "preflight" | "model" | "checkpoint" | "action" | "tool";
 export type AgentDiagnostic = {
   // Internal categories preserve the boundary failure without exposing error text.
-  origin?: { boundary: "model" | "context" | "checkpoint"; category: string };
-  category: AgentFailureCode;
+  origin?: AgentFailureOrigin;
+  category: AgentFailureCode | "trace_failed" | "trace_timeout";
   phase: RunnerPhase;
   modelRequests: number;
   toolExecutions: number;

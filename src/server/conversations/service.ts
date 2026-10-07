@@ -10,8 +10,9 @@ import {
   type MessageSubmission, type RetrySubmission, type ConversationSnapshot, type ChatStreamEvent,
 } from "../../shared/conversations";
 import type { AnalysisRunInput } from "../analysis/types";
-import { jsonValueSchema } from "../contracts/json";
-import { ConversationRepositoryError, type ConversationRepository } from "./repository";
+import { reportSafely } from "../observability/reporting";
+import { createAnalysisRecording } from "./analysis-recording";
+import { ConversationRepositoryError, type ConversationRepository, type SubmissionLookup, type StartRunResult } from "./repository";
 import type { ConversationRun, RunOutcome, RunVersions } from "./contracts";
 import { projectConversation } from "./display";
 
@@ -47,7 +48,7 @@ export type AdmittedSubmission = {
   execute?: (signal: AbortSignal, emit: (event: ChatStreamEvent) => void) => Promise<void>;
 };
 
-function failedOutcome(error: unknown): RunOutcome {
+function failedOutcome(error: unknown): Extract<RunOutcome, { kind: "failure" }> {
   let code: Extract<RunOutcome, { kind: "failure" }>["error"]["code"] = "internal";
   if (error instanceof ContextError) {
     if (error.code === "configuration" || error.code === "context_limit") {
@@ -58,7 +59,11 @@ function failedOutcome(error: unknown): RunOutcome {
   } else if (error instanceof ConversationRepositoryError) {
     code = "persistence";
   }
-  return { kind: "failure", status: "failed", error: { code, message: "The analysis could not be completed." } };
+  return {
+    kind: "failure",
+    status: "failed",
+    error: { code, message: "The analysis could not be completed." },
+  };
 }
 
 export function createConversationService(dependencies: Dependencies) {
@@ -72,6 +77,29 @@ export function createConversationService(dependencies: Dependencies) {
   async function load(conversationId: string): Promise<ConversationSnapshot> {
     await reconcile();
     return projectConversation(await repository.loadHistory(conversationId), dependencies.reportFailure);
+  }
+
+  async function resolveExecutionOutcome(
+    run: ConversationRun,
+    proposedOutcome: RunOutcome | null,
+  ): Promise<ChatStreamEvent> {
+    if (proposedOutcome) {
+      try {
+        await repository.finishRun(run.id, { outcome: proposedOutcome });
+      } catch (error) {
+        // Acceptance or expiry reconciliation may have won. Durable state resolves the race.
+        if (!(error instanceof ConversationRepositoryError) || error.code !== "conflict") {
+          throw error;
+        }
+      }
+    }
+    const snapshot = projectConversation(await repository.loadHistory(run.conversationId), dependencies.reportFailure);
+    const attempt = snapshot.turns.flatMap(turn => turn.attempts).find(item => item.id === run.id);
+    if (!attempt?.outcome) {
+      throw new ConversationServiceError("synchronization_failed", "The analysis outcome could not be confirmed. Check status.");
+    }
+    const kind = attempt.outcome.kind === "failure" ? "error" : attempt.outcome.kind;
+    return { kind, runId: run.id, snapshot };
   }
 
   async function execute(
@@ -103,64 +131,7 @@ export function createConversationService(dependencies: Dependencies) {
         storedEvidence: history.evidence,
         signal,
         deadline: admittedRun.deadline,
-        async recordModelCall(trace) {
-          await repository.recordAgentTrace(runId, {
-            kind: "model_call",
-            payload: jsonValueSchema.parse(trace),
-            startedAt: trace.startedAt,
-            finishedAt: trace.finishedAt,
-          });
-        },
-        async recordToolCall(trace) {
-          await repository.recordAgentTrace(runId, {
-            kind: "tool_call",
-            payload: jsonValueSchema.parse(trace),
-            startedAt: trace.startedAt,
-            finishedAt: trace.finishedAt,
-          });
-        },
-        async checkpoint(event) {
-          switch (event.kind) {
-            case "assistant":
-              await repository.appendAssistant(runId, event.response.message);
-              if (event.response.message.toolCalls.some(call => call.name === "run_sql")) {
-                emit({ kind: "progress", runId, phase: "querying" });
-              }
-              return;
-            case "context_note":
-              await repository.appendContextNote(runId, event.content);
-              return;
-            case "tool_result": {
-              const artifact = event.artifact;
-              if (artifact) {
-                const evidenceId = artifact.input.evidence.resultId;
-                if (artifact.delivery === "visible") {
-                  await repository.recordToolResult(runId, {
-                    callId: event.callId,
-                    payload: { kind: "evidence", evidenceId },
-                  }, artifact.input);
-                } else {
-                  await repository.recordToolResult(runId, {
-                    callId: event.callId,
-                    payload: { kind: "evidence_unavailable", evidenceId, content: event.content },
-                  }, artifact.input);
-                }
-              } else {
-                await repository.recordToolResult(runId, {
-                  callId: event.callId,
-                  payload: { kind: "inline", content: event.content },
-                });
-              }
-              emit({ kind: "progress", runId, phase: "thinking" });
-              return;
-            }
-            case "terminal":
-              await repository.finishRun(runId, {
-                outcome: event.outcome,
-                acknowledgment: { callId: event.callId, payload: { kind: "inline", content: event.acknowledgment } },
-              });
-          }
-        },
+        ...createAnalysisRecording({ repository, runId, emit }),
       });
       if (result.kind === "failure") {
         proposedOutcome = {
@@ -171,33 +142,13 @@ export function createConversationService(dependencies: Dependencies) {
       }
     } catch (error) {
       proposedOutcome = failedOutcome(error);
-      dependencies.reportFailure?.({ category: proposedOutcome.kind === "failure" ? proposedOutcome.error.code : "internal", runId });
+      reportSafely(dependencies.reportFailure, { category: proposedOutcome.error.code, runId });
     }
 
     try {
-      if (proposedOutcome) {
-        try {
-          await repository.finishRun(runId, { outcome: proposedOutcome });
-        } catch (error) {
-          // A terminal commit or expiry reconciliation may already have won.
-          // Only a read of durable state can resolve this conflict.
-          if (!(error instanceof ConversationRepositoryError) || error.code !== "conflict") {
-            throw error;
-          }
-        }
-      }
-      const snapshot = projectConversation(await repository.loadHistory(admittedRun.conversationId), dependencies.reportFailure);
-      const attempt = snapshot.turns.flatMap(turn => turn.attempts).find(item => item.id === runId);
-      if (!attempt?.outcome) {
-        throw new ConversationServiceError("synchronization_failed", "The analysis outcome could not be confirmed. Check status.");
-      }
-      let kind: "answer" | "clarification" | "error" = "error";
-      if (attempt.outcome.kind === "answer" || attempt.outcome.kind === "clarification") {
-        kind = attempt.outcome.kind;
-      }
-      emit({ kind, runId, snapshot });
+      emit(await resolveExecutionOutcome(admittedRun, proposedOutcome));
     } catch {
-      dependencies.reportFailure?.({ category: "synchronization_failed", runId });
+      reportSafely(dependencies.reportFailure, { category: "synchronization_failed", runId });
       emit({
         kind: "error",
         runId,
@@ -208,10 +159,17 @@ export function createConversationService(dependencies: Dependencies) {
 
   async function admit(conversationId: string, submission: MessageSubmission | RetrySubmission, retryRunId?: string): Promise<AdmittedSubmission> {
     await reconcile();
-    const operation = "message" in submission
-      ? { kind: "message" as const, message: submission.message }
-      : { kind: "retry" as const, runId: retryRunId ?? "" };
-    const duplicate = await repository.findSubmission({ conversationId, clientMessageId: submission.clientMessageId, operation });
+    let operation: SubmissionLookup["operation"];
+    if ("message" in submission) {
+      operation = { kind: "message", message: submission.message };
+    } else {
+      operation = { kind: "retry", runId: retryRunId ?? "" };
+    }
+    const duplicate = await repository.findSubmission({
+      conversationId,
+      clientMessageId: submission.clientMessageId,
+      operation,
+    });
     if (duplicate) {
       return { run: duplicate, created: false, snapshot: await load(conversationId) };
     }
@@ -231,9 +189,12 @@ export function createConversationService(dependencies: Dependencies) {
       deadline: now() + RUN_DURATION_MS,
       versions: prepared.versions,
     };
-    const result = "message" in submission
-      ? await repository.startRun({ ...base, message: submission.message })
-      : await repository.retryRun({ ...base, runId: retryRunId ?? "" });
+    let result: StartRunResult;
+    if ("message" in submission) {
+      result = await repository.startRun({ ...base, message: submission.message });
+    } else {
+      result = await repository.retryRun({ ...base, runId: retryRunId ?? "" });
+    }
     // Admission has committed. Snapshot failure must not leave an admitted run
     // with no owner; execute can still settle it using the recorded identity.
     let snapshot: ConversationSnapshot;

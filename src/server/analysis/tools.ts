@@ -3,7 +3,6 @@ import { errorContent } from "../agent/actions";
 import type { RecoverableToolError, RegisteredTool, ToolExecution } from "../agent/contracts";
 import { AgentRunnerError } from "../agent/runner-contracts";
 import { registerTool } from "../agent/tool-registration";
-import { ContextError } from "../context/contracts";
 import { prepareAnswerCharts } from "../charts/prepare";
 import { projectEvidence } from "../context/evidence";
 import { jsonValueSchema } from "../contracts/json";
@@ -80,7 +79,7 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
         try {
           invocation.checkContinuation(content);
         } catch (error) {
-          if (!(error instanceof ContextError) || error.code !== "context_limit") {
+          if (!(error instanceof AgentRunnerError) || error.code !== "context_limit") {
             throw error;
           }
           const feedback: RecoverableToolError = {

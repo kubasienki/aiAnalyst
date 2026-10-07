@@ -41,6 +41,25 @@ afterEach(() => {
 });
 
 describe("tool-capable OpenRouter adapter", () => {
+  it("preserves a valid response and a provider failure when trace storage rejects", async () => {
+    const recordTrace = vi.fn(async () => { throw new Error("private trace failure"); });
+    const success = setup();
+    expect(await success.model.complete(request({ recordTrace }))).toMatchObject({ finishReason: "stop" });
+    expect(success.diagnostics).toHaveBeenCalledWith(expect.objectContaining({ category: "trace_failed" }));
+    const failure = setup({ error: { code: "provider_error" } }, { status: 400 });
+    await expect(failure.model.complete(request({ recordTrace }))).rejects.toMatchObject({ code: "provider" });
+    expect(JSON.stringify(failure.diagnostics.mock.calls)).not.toContain("private");
+  });
+
+  it("bounds a stalled model trace without changing the validated response", async () => {
+    vi.useFakeTimers();
+    const f = setup();
+    const pending = f.model.complete(request({ recordTrace: () => new Promise<void>(() => {}) }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await pending).toMatchObject({ finishReason: "stop" });
+    expect(f.diagnostics).toHaveBeenCalledWith(expect.objectContaining({ category: "trace_timeout" }));
+  });
+
   it("sends native tool definitions and required parameter routing", async () => {
     const { model, fetcher } = setup();
     const result = await model.complete(request());
@@ -69,7 +88,7 @@ describe("tool-capable OpenRouter adapter", () => {
       usage: { inputTokens: 23, outputTokens: 7 },
       startedAt: expect.any(Number),
       finishedAt: expect.any(Number),
-    }));
+    }), expect.any(AbortSignal));
   });
 
   it.each([
