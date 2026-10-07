@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ModelRequest } from "../agent/contracts";
 import { ContextError, type ContextBudget, type ContextMeasurement, type ModelRequestMeasurer } from "./contracts";
 
-export const DEFAULT_CONTEXT_WINDOW_TOKENS = 65_536;
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000;
 export const DEFAULT_SAFETY_TOKENS = 2_048;
 
 const budgetSchema = z.strictObject({

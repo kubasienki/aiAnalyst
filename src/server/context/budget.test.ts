@@ -56,7 +56,7 @@ describe("context request measurement", () => {
   });
 
   it("loads configuration lazily with the agreed defaults", () => {
-    expect(readContextBudget({})).toEqual({ contextWindowTokens: 65_536, safetyTokens: 2_048 });
+    expect(readContextBudget({})).toEqual({ contextWindowTokens: 1_000_000, safetyTokens: 2_048 });
     expect(readContextBudget({ AGENT_CONTEXT_WINDOW_TOKENS: "131072" })).toEqual({ contextWindowTokens: 131_072, safetyTokens: 2_048 });
   });
 
