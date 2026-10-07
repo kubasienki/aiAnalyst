@@ -2,6 +2,7 @@ import { MAX_USER_MESSAGE_LENGTH } from "../../shared/chat";
 import { isOlderRevision, type ChatStreamEvent, type ConversationSnapshot, type DisplayAttempt } from "../../shared/conversations";
 import { ChatRequestError, type ChatApi } from "./chat-api";
 import type { ChatStorage, PendingOperation } from "./storage";
+import { reconcilePendingOperation } from "./snapshot-reconciliation";
 
 export type ChatPhase = "loading" | "ready" | "submitting" | "running" | "reconnecting";
 export type ChatState = {
@@ -16,6 +17,12 @@ export type ChatState = {
   online: boolean;
   requestActive: boolean;
   cancelling: boolean;
+};
+
+type ChatControllerDependencies = {
+  api: ChatApi;
+  storage: ChatStorage;
+  newId(): string;
 };
 
 const initialState: ChatState = {
@@ -46,17 +53,21 @@ export function canRetry(snapshot: ConversationSnapshot | null): boolean {
 export class ChatController {
   private state: ChatState = initialState;
   private listeners = new Set<() => void>();
+  // Incremented when a conversation lifecycle starts or ends. Replies from an
+  // older lifecycle must not publish state, even if their requests ignore abort.
   private generation = 0;
+  // Survives post-submission synchronization after the active request is cleared.
+  private latestSubmissionId = 0;
   private conversationId: string | null = null;
   private pending: PendingOperation | null = null;
-  private activePost: AbortController | null = null;
-  private activeRead: AbortController | null = null;
-  private readCompletion: Promise<void> | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private activeSubmissionController: AbortController | null = null;
+  private activeSnapshotController: AbortController | null = null;
+  private snapshotReadCompletion: Promise<void> | null = null;
+  private pollingTimer: ReturnType<typeof setTimeout> | null = null;
   private available = true;
   private disposed = false;
 
-  constructor(private readonly dependencies: { api: ChatApi; storage: ChatStorage; newId: () => string }) {}
+  constructor(private readonly dependencies: ChatControllerDependencies) {}
 
   getSnapshot = (): ChatState => this.state;
   getServerSnapshot = (): ChatState => initialState;
@@ -76,15 +87,15 @@ export class ChatController {
     return !this.disposed && this.generation === generation;
   }
 
-  private stopTimer(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
+  private stopPolling(): void {
+    if (this.pollingTimer !== null) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = null;
     }
   }
 
   private schedulePoll(): void {
-    this.stopTimer();
+    this.stopPolling();
     if (!this.available || this.disposed || this.state.recovery) {
       return;
     }
@@ -92,7 +103,9 @@ export class ChatController {
       return;
     }
     // Two seconds between settled polls; there is never overlapping polling.
-    this.timer = setTimeout(() => { void this.sync(); }, 2_000);
+    this.pollingTimer = setTimeout(() => {
+      void this.sync();
+    }, 2_000);
   }
 
   private clearPending(): void {
@@ -100,7 +113,38 @@ export class ChatController {
     try {
       this.dependencies.storage.clearPending();
     } catch {
-      this.update({ storageError: "The recovery record could not be cleared. Server history is still saved." });
+      this.update({
+        storageError: "The recovery record could not be cleared. Server history is still saved.",
+      });
+    }
+  }
+
+  private reconcilePendingSubmission(snapshot: ConversationSnapshot): PendingOperation | null {
+    const decision = reconcilePendingOperation({
+      pendingOperation: this.pending,
+      snapshot,
+      draft: this.state.draft,
+      submissionInFlight: this.activeSubmissionController !== null,
+    });
+    switch (decision.kind) {
+      case "accepted":
+        if (decision.draft !== this.state.draft) {
+          this.update({ draft: decision.draft });
+        }
+        this.clearPending();
+        return null;
+      case "stale_revision":
+        this.clearPending();
+        this.update({
+          draft: decision.draft,
+          error: "Conversation changed. Review the refreshed history before sending.",
+        });
+        return null;
+      case "recoverable":
+        return decision.operation;
+      case "no_pending_operation":
+      case "submission_in_flight":
+        return null;
     }
   }
 
@@ -112,32 +156,19 @@ export class ChatController {
     if (previous && isOlderRevision(snapshot.revision, previous.revision)) {
       return false;
     }
-    let recovery: PendingOperation | null = null;
-    if (this.pending) {
-      const accepted = snapshot.turns.some(turn => turn.attempts.some(attempt => attempt.clientMessageId === this.pending?.clientMessageId));
-      if (accepted) {
-        if (this.pending.kind === "message" && this.state.draft === this.pending.message) {
-          this.update({ draft: "" });
-        }
-        this.clearPending();
-      } else if (!this.activePost) {
-        if (this.pending.expectedRevision !== snapshot.revision) {
-          const draft = this.pending.kind === "message" ? this.pending.message : this.state.draft;
-          this.clearPending();
-          this.update({ draft, error: "Conversation changed. Review the refreshed history before sending." });
-        } else {
-          recovery = this.pending;
-        }
-      }
-    }
+    const recovery = this.reconcilePendingSubmission(snapshot);
     let phase: ChatPhase = "ready";
-    if (this.activePost) {
+    if (this.activeSubmissionController) {
       phase = "submitting";
     }
     if (latestAttempt(snapshot)?.status === "running") {
       phase = "running";
     }
-    this.update({ snapshot, phase, recovery });
+    this.update({
+      snapshot,
+      phase,
+      recovery,
+    });
     return true;
   }
 
@@ -155,7 +186,10 @@ export class ChatController {
         }
       }
     } catch {
-      this.update({ phase: "reconnecting", storageError: "Saved conversation recovery could not be loaded. Start a new conversation to continue." });
+      this.update({
+        phase: "reconnecting",
+        storageError: "Saved conversation recovery could not be loaded. Start a new conversation to continue.",
+      });
       return;
     }
     if (!this.isCurrent(generation)) {
@@ -164,34 +198,53 @@ export class ChatController {
     await this.sync();
   }
 
+  private async loadOrCreateSnapshot(signal: AbortSignal): Promise<ConversationSnapshot> {
+    if (this.conversationId) {
+      return this.dependencies.api.load(this.conversationId, signal);
+    }
+    return this.dependencies.api.create(signal);
+  }
+
+  private rememberConversationIdentity(conversationId: string): void {
+    this.conversationId = conversationId;
+    try {
+      this.dependencies.storage.saveActiveId(conversationId);
+    } catch {
+      this.update({
+        storageError: "Conversation identity could not be saved. Keep this tab open until storage is available.",
+      });
+    }
+  }
+
+  private handleSnapshotReadFailure(error: unknown): void {
+    let message = "Conversation status could not be loaded. Check status before sending.";
+    if (error instanceof ChatRequestError && error.status === 404) {
+      message = "This conversation is unavailable. Start a new conversation.";
+    }
+    this.update({
+      phase: "reconnecting",
+      error: message,
+    });
+  }
+
   sync = async (): Promise<void> => {
     if (this.disposed || !this.available) {
       return;
     }
-    if (this.readCompletion) {
-      return this.readCompletion;
+    if (this.snapshotReadCompletion) {
+      return this.snapshotReadCompletion;
     }
-    this.stopTimer();
+    this.stopPolling();
     const generation = this.generation;
     const controller = new AbortController();
-    this.activeRead = controller;
+    this.activeSnapshotController = controller;
     const completion = (async () => {
       try {
-        let snapshot: ConversationSnapshot;
-        if (this.conversationId) {
-          snapshot = await this.dependencies.api.load(this.conversationId, controller.signal);
-        } else {
-          snapshot = await this.dependencies.api.create(controller.signal);
-        }
-        if (!this.isCurrent(generation)) {
+        const snapshot = await this.loadOrCreateSnapshot(controller.signal);
+        if (!this.isCurrent(generation) || this.activeSnapshotController !== controller) {
           return;
         }
-        this.conversationId = snapshot.conversationId;
-        try {
-          this.dependencies.storage.saveActiveId(snapshot.conversationId);
-        } catch {
-          this.update({ storageError: "Conversation identity could not be saved. Keep this tab open until storage is available." });
-        }
+        this.rememberConversationIdentity(snapshot.conversationId);
         if (this.state.phase === "reconnecting" || this.state.phase === "loading") {
           this.update({ error: null });
         }
@@ -200,20 +253,16 @@ export class ChatController {
         if (!this.isCurrent(generation) || controller.signal.aborted) {
           return;
         }
-        let message = "Conversation status could not be loaded. Check status before sending.";
-        if (error instanceof ChatRequestError && error.status === 404) {
-          message = "This conversation is unavailable. Start a new conversation.";
-        }
-        this.update({ phase: "reconnecting", error: message });
+        this.handleSnapshotReadFailure(error);
       } finally {
-        if (this.activeRead === controller) {
-          this.activeRead = null;
-          this.readCompletion = null;
+        if (this.activeSnapshotController === controller) {
+          this.activeSnapshotController = null;
+          this.snapshotReadCompletion = null;
           this.schedulePoll();
         }
       }
     })();
-    this.readCompletion = completion;
+    this.snapshotReadCompletion = completion;
     return completion;
   };
 
@@ -222,18 +271,21 @@ export class ChatController {
   };
 
   cancel = (): void => {
-    if (!this.activePost || this.state.cancelling) {
+    if (!this.activeSubmissionController || this.state.cancelling) {
       return;
     }
     this.update({ cancelling: true });
-    this.activePost.abort();
+    this.activeSubmissionController.abort();
   };
 
   private handleEvent(event: ChatStreamEvent, operation: PendingOperation): void {
-    if (event.runId && event.kind === "progress") {
+    if (event.kind === "progress") {
       const current = latestAttempt(this.state.snapshot);
       if (current?.id === event.runId && current.status === "running") {
-        this.update({ phase: "running", progress: event.phase });
+        this.update({
+          phase: "running",
+          progress: event.phase,
+        });
       }
       return;
     }
@@ -243,30 +295,66 @@ export class ChatController {
       if (!attempt) {
         throw new Error("The stream returned a different submission.");
       }
-      if (this.applySnapshot(event.snapshot) && event.kind === "accepted" && operation.kind === "message"
+      const snapshotApplied = this.applySnapshot(event.snapshot);
+      if (snapshotApplied
+        && event.kind === "accepted"
+        && operation.kind === "message"
         && this.state.draft === operation.message) {
         this.update({ draft: "" });
       }
     } else if (event.kind === "error") {
-      this.update({ phase: "reconnecting", error: event.error?.message ?? "The analysis outcome could not be confirmed. Check status." });
+      this.update({
+        phase: "reconnecting",
+        error: event.error?.message ?? "The analysis outcome could not be confirmed. Check status.",
+      });
     }
   }
 
-  private async submit(operation: PendingOperation): Promise<void> {
-    if (this.activePost || this.disposed || !this.available) {
-      return;
-    }
+  private persistSubmissionRecovery(operation: PendingOperation): boolean {
     try {
       this.dependencies.storage.saveActiveId(operation.conversationId);
       this.dependencies.storage.savePending(operation);
+      return true;
     } catch {
-      this.update({ storageError: "The message recovery record could not be saved. Your draft is preserved; enable browser storage before sending." });
+      this.update({
+        storageError: "The message recovery record could not be saved. Your draft is preserved; enable browser storage before sending.",
+      });
+      return false;
+    }
+  }
+
+  private handleSubmissionFailure(error: unknown, operation: PendingOperation): void {
+    if (error instanceof ChatRequestError && [400, 404, 409].includes(error.status)) {
+      this.clearPending();
+      let draft = this.state.draft;
+      if (operation.kind === "message") {
+        draft = operation.message;
+      }
+      this.update({
+        error: error.message,
+        draft,
+        recovery: null,
+      });
+      return;
+    }
+    this.update({
+      phase: "reconnecting",
+      error: "Connection interrupted. Checking whether your message was saved…",
+    });
+  }
+
+  private async submit(operation: PendingOperation): Promise<void> {
+    if (this.activeSubmissionController || this.disposed || !this.available) {
+      return;
+    }
+    if (!this.persistSubmissionRecovery(operation)) {
       return;
     }
     const generation = this.generation;
+    const submissionId = ++this.latestSubmissionId;
     const controller = new AbortController();
     this.pending = operation;
-    this.activePost = controller;
+    this.activeSubmissionController = controller;
     this.update({
       phase: "submitting",
       recovery: null,
@@ -278,7 +366,7 @@ export class ChatController {
     });
     try {
       await this.dependencies.api.submit(operation, controller.signal, event => {
-        if (this.isCurrent(generation) && this.activePost === controller) {
+        if (this.isCurrent(generation) && this.activeSubmissionController === controller) {
           this.handleEvent(event, operation);
         }
       });
@@ -286,21 +374,19 @@ export class ChatController {
       if (!this.isCurrent(generation) || controller.signal.aborted) {
         return;
       }
-      if (error instanceof ChatRequestError && [400, 404, 409].includes(error.status)) {
-        this.clearPending();
-        this.update({
-          error: error.message,
-          draft: operation.kind === "message" ? operation.message : this.state.draft,
-          recovery: null,
-        });
-      } else {
-        this.update({ phase: "reconnecting", error: "Connection interrupted. Checking whether your message was saved…" });
-      }
+      this.handleSubmissionFailure(error, operation);
     } finally {
-      if (this.activePost === controller) {
-        this.activePost = null;
+      if (this.isCurrent(generation) && this.activeSubmissionController === controller) {
+        this.activeSubmissionController = null;
         await this.sync();
-        this.update({ requestActive: false, cancelling: false });
+        // Synchronization can publish ready state and allow another submission.
+        // Recheck ownership after the await, including within this generation.
+        if (this.isCurrent(generation) && this.latestSubmissionId === submissionId) {
+          this.update({
+            requestActive: false,
+            cancelling: false,
+          });
+        }
       }
     }
   }
@@ -308,7 +394,11 @@ export class ChatController {
   sendMessage = async (content = this.state.draft): Promise<void> => {
     const snapshot = this.state.snapshot;
     const message = content.trim();
-    if (!snapshot || this.state.phase !== "ready" || this.state.recovery || !message || message.length > MAX_USER_MESSAGE_LENGTH) {
+    if (!snapshot
+      || this.state.phase !== "ready"
+      || this.state.recovery
+      || !message
+      || message.length > MAX_USER_MESSAGE_LENGTH) {
       return;
     }
     this.update({ draft: message });
@@ -324,7 +414,11 @@ export class ChatController {
   retry = async (): Promise<void> => {
     const snapshot = this.state.snapshot;
     const attempt = latestAttempt(snapshot);
-    if (!snapshot || !attempt || !canRetry(snapshot) || this.state.phase !== "ready" || this.state.recovery) {
+    if (!snapshot
+      || !attempt
+      || !canRetry(snapshot)
+      || this.state.phase !== "ready"
+      || this.state.recovery) {
       return;
     }
     await this.submit({
@@ -348,47 +442,54 @@ export class ChatController {
       return;
     }
     this.clearPending();
-    this.update({ recovery: null, draft: operation.kind === "message" ? operation.message : this.state.draft });
+    let draft = this.state.draft;
+    if (operation.kind === "message") {
+      draft = operation.message;
+    }
+    this.update({ recovery: null, draft });
   };
 
   setAvailable = (available: boolean): void => {
     this.available = available;
     if (!available) {
-      this.stopTimer();
+      this.stopPolling();
       return;
     }
     void this.sync();
   };
 
   setOnline = (online: boolean): void => {
-    this.update({
-      online,
-      ...(!online ? { error: "Offline. Your saved conversation is still available when you reconnect." } : {}),
-    });
+    const change: Partial<ChatState> = { online };
+    if (!online) {
+      change.error = "Offline. Your saved conversation is still available when you reconnect.";
+    }
+    this.update(change);
   };
+
+  private stopRequestsAndPolling(): void {
+    this.activeSubmissionController?.abort();
+    this.activeSubmissionController = null;
+    this.activeSnapshotController?.abort();
+    this.activeSnapshotController = null;
+    this.snapshotReadCompletion = null;
+    this.stopPolling();
+  }
 
   newConversation = async (): Promise<void> => {
     ++this.generation;
-    this.activePost?.abort();
-    this.activePost = null;
-    this.activeRead?.abort();
-    this.activeRead = null;
-    this.readCompletion = null;
-    this.stopTimer();
+    this.stopRequestsAndPolling();
     this.clearPending();
     this.conversationId = null;
-    this.update({ ...initialState, conversationKey: this.state.conversationKey + 1 });
+    this.update({
+      ...initialState,
+      conversationKey: this.state.conversationKey + 1,
+    });
     await this.sync();
   };
 
   dispose(): void {
     this.disposed = true;
     ++this.generation;
-    this.activePost?.abort();
-    this.activePost = null;
-    this.activeRead?.abort();
-    this.activeRead = null;
-    this.readCompletion = null;
-    this.stopTimer();
+    this.stopRequestsAndPolling();
   }
 }

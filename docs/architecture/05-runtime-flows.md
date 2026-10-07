@@ -151,7 +151,7 @@ sequenceDiagram
     end
 ```
 
-Recovery does not automatically resend an uncertain request. Matching duplicates are recognized before creating another execution. Reuse of an ID for different content/operation is a submission mismatch; unseen revisions and active-run conflicts are rejected. Older snapshots do not replace newer controller state.
+Recovery does not automatically resend an uncertain request. Matching duplicates are recognized before creating another execution. Reuse of an ID for different content/operation is a submission mismatch; unseen revisions and active-run conflicts are rejected. Older snapshots do not replace newer controller state. Submission cleanup rechecks both the conversation generation and latest submission identity after synchronization, so a delayed completion cannot clear a newer request's active/cancellation flags or publish state after disposal.
 
 ## Cancellation and expiry
 

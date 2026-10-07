@@ -25,9 +25,9 @@ flowchart LR
     debug -->|"HTTP JSON: development debug APIs"| server
 ```
 
-Rendering components display state and invoke actions. `useChat` bridges React lifecycle to the controller. `ChatController` receives API and storage dependencies explicitly, guards stale asynchronous completions using a generation, rejects older snapshots, and owns one tab's request state. It saves recovery information before issuing a POST, and reconciles server state before permitting a resend. Chart rendering consumes prepared display data; it does not query BigQuery or resolve evidence itself.
+Rendering components display state and invoke actions. `useChat` bridges React lifecycle to the controller. `ChatController` receives API and storage dependencies explicitly, rejects older snapshots, and owns one tab's request state. A generation identifies the conversation lifecycle; a monotonically increasing submission identity also protects cleanup after awaited synchronization, including when a newer submission starts in the same conversation. It saves recovery information before issuing a POST. The pure snapshot reconciliation module decides whether pending work is accepted, still in flight, stale, or recoverable; the controller applies storage and state changes and never automatically resends uncertain work. Chart rendering consumes prepared display data; it does not query BigQuery or resolve evidence itself.
 
-Sources: [chat controller](../../src/features/chat/controller.ts), [React bridge](../../src/features/chat/useChat.ts), [API decoder](../../src/features/chat/chat-api.ts), [storage adapter](../../src/features/chat/storage.ts), [chart presentation](../../src/features/charts/AnswerChart.tsx), and [debugger view](../../src/app/debug/agents/view.tsx).
+Sources: [chat controller](../../src/features/chat/controller.ts), [snapshot reconciliation](../../src/features/chat/snapshot-reconciliation.ts), [React bridge](../../src/features/chat/useChat.ts), [API decoder](../../src/features/chat/chat-api.ts), [storage adapter](../../src/features/chat/storage.ts), [chart presentation](../../src/features/charts/AnswerChart.tsx), and [debugger view](../../src/app/debug/agents/view.tsx).
 
 ## Server application
 

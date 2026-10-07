@@ -275,4 +275,144 @@ describe("browser conversation synchronization", () => {
     expect(canRetry(active)).toBe(true);
     expect(canRetry(complete(active))).toBe(false);
   });
+
+  it.each([false, true])("preserves newer submission flags when older cleanup settles (switch conversation: %s)", async switchConversation => {
+    const initial = empty();
+    const f = fixture(initial);
+    await f.controller.initialize();
+    const oldRead = deferred<ConversationSnapshot>();
+    const readStarted = deferred<void>();
+    vi.mocked(f.api.load).mockImplementationOnce(() => {
+      readStarted.resolve();
+      return oldRead.promise;
+    });
+    const firstSubmission = f.controller.sendMessage("First question");
+    await readStarted.promise;
+    const firstOperation = vi.mocked(f.api.submit).mock.calls[0][0];
+
+    if (switchConversation) {
+      await f.controller.newConversation();
+    }
+    const secondPost = deferred<void>();
+    vi.mocked(f.api.submit).mockReturnValueOnce(secondPost.promise);
+    let secondSubmission: Promise<void> | undefined;
+    function startSecondSubmission() {
+      secondSubmission = f.controller.sendMessage("Second question");
+      f.controller.cancel();
+    }
+    if (switchConversation) {
+      startSecondSubmission();
+    } else {
+      // Start when the settled read publishes ready state, before the earlier
+      // submission's awaited cleanup resumes in the next microtask.
+      const unsubscribe = f.controller.subscribe(() => {
+        if (f.controller.getSnapshot().phase === "ready") {
+          unsubscribe();
+          startSecondSubmission();
+        }
+      });
+    }
+
+    oldRead.resolve(complete(running(initial, firstOperation)));
+    await firstSubmission;
+    expect(f.controller.getSnapshot()).toMatchObject({ requestActive: true, cancelling: true });
+    expect(f.api.submit).toHaveBeenCalledTimes(2);
+    if (!secondSubmission) {
+      throw new Error("The newer submission did not start.");
+    }
+
+    f.controller.dispose();
+    secondPost.resolve();
+    await secondSubmission;
+  });
+
+  it("does not publish delayed submission cleanup after disposal", async () => {
+    const initial = empty();
+    const f = fixture(initial);
+    await f.controller.initialize();
+    const read = deferred<ConversationSnapshot>();
+    const readStarted = deferred<void>();
+    vi.mocked(f.api.load).mockImplementationOnce(() => {
+      readStarted.resolve();
+      return read.promise;
+    });
+    const submission = f.controller.sendMessage("Revenue?");
+    await readStarted.promise;
+    const operation = vi.mocked(f.api.submit).mock.calls[0][0];
+    const changed = vi.fn();
+    f.controller.subscribe(changed);
+    f.controller.dispose();
+    const stateAfterDisposal = f.controller.getSnapshot();
+    read.resolve(complete(running(initial, operation)));
+    await submission;
+    expect(changed).not.toHaveBeenCalled();
+    expect(f.controller.getSnapshot()).toBe(stateAfterDisposal);
+  });
+
+  it.each(["stream", "snapshot"])("preserves an edited draft when acceptance arrives through %s", async delivery => {
+    const initial = empty();
+    const f = fixture(initial);
+    await f.controller.initialize();
+    const post = deferred<void>();
+    let notify: ((event: ChatStreamEvent) => void) | undefined;
+    vi.mocked(f.api.submit).mockImplementationOnce((_operation, _signal, onEvent) => {
+      notify = onEvent;
+      return post.promise;
+    });
+    const submission = f.controller.sendMessage("Original question");
+    f.controller.setDraft("Edited next question");
+    const operation = vi.mocked(f.api.submit).mock.calls[0][0];
+    const accepted = complete(running(initial, operation));
+    f.setServer(accepted);
+    if (delivery === "stream") {
+      notify?.({ kind: "accepted", runId: accepted.turns[0].attempts[0].id, snapshot: accepted });
+    }
+    post.resolve();
+    await submission;
+    expect(f.controller.getSnapshot()).toMatchObject({ draft: "Edited next question", recovery: null });
+    expect(f.storedPending()).toBeNull();
+  });
+
+  it("keeps accepted server history usable when clearing recovery storage fails", async () => {
+    const initial = empty();
+    const operation = pendingMessage(initial);
+    const f = fixture(complete(running(initial, operation)), operation);
+    vi.mocked(f.storage.clearPending).mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    await f.controller.initialize();
+    expect(f.controller.getSnapshot()).toMatchObject({
+      phase: "ready",
+      recovery: null,
+      draft: "",
+      storageError: expect.stringContaining("could not be cleared"),
+    });
+    expect(f.api.submit).not.toHaveBeenCalled();
+  });
+
+  it("ignores a delayed stream event and snapshot read after disposal", async () => {
+    const initial = empty();
+    const f = fixture(initial);
+    await f.controller.initialize();
+    const read = deferred<ConversationSnapshot>();
+    vi.mocked(f.api.load).mockReturnValueOnce(read.promise);
+    const synchronization = f.controller.sync();
+    const post = deferred<void>();
+    let notify: ((event: ChatStreamEvent) => void) | undefined;
+    vi.mocked(f.api.submit).mockImplementationOnce((_operation, _signal, onEvent) => {
+      notify = onEvent;
+      return post.promise;
+    });
+    const submission = f.controller.sendMessage("Revenue?");
+    const operation = vi.mocked(f.api.submit).mock.calls[0][0];
+    const accepted = complete(running(initial, operation));
+    const changed = vi.fn();
+    f.controller.subscribe(changed);
+    f.controller.dispose();
+    notify?.({ kind: "answer", runId: accepted.turns[0].attempts[0].id, snapshot: accepted });
+    read.resolve(accepted);
+    post.resolve();
+    await Promise.all([synchronization, submission]);
+    expect(changed).not.toHaveBeenCalled();
+  });
 });
