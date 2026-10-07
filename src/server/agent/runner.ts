@@ -2,7 +2,7 @@ import "server-only";
 import { jsonValueSchema } from "../contracts/json";
 import { recoverableToolErrorSchema, type FailureRepeatPolicy, type ModelRequest, type RegisteredTool } from "./contracts";
 import { ModelError } from "./errors";
-import { createAgentExecution } from "./execution";
+import { createExecutionScope, ExecutionStopped } from "../execution/scope";
 import { reportSafely } from "../observability/reporting";
 import { createToolTraceRecorder } from "./tracing";
 import { errorContent, resolveAction } from "./actions";
@@ -18,6 +18,11 @@ const ACTION_NOTE = "Application protocol: the previous text is not an accepted 
 function normalizeFailure(error: unknown): AgentRunnerError {
   if (error instanceof AgentRunnerError) {
     return error;
+  }
+  if (error instanceof ExecutionStopped) {
+    return new AgentRunnerError(error.reason, error.reason === "cancelled"
+      ? "The request was cancelled."
+      : "The execution deadline was reached.");
   }
   if (error instanceof ModelError) {
     switch (error.code) {
@@ -38,6 +43,16 @@ function normalizeFailure(error: unknown): AgentRunnerError {
   return new AgentRunnerError("internal", "The agent attempt could not be completed.");
 }
 
+function toolFailureCategory(error: unknown): string {
+  if (error instanceof AgentRunnerError) {
+    return error.code;
+  }
+  if (error instanceof ExecutionStopped) {
+    return error.reason;
+  }
+  return "tool_failed";
+}
+
 function diagnosticOrigin(error: unknown): AgentDiagnostic["origin"] {
   if (error instanceof ModelError) {
     return { boundary: "model", category: error.code };
@@ -55,12 +70,11 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
     const startedAt = Date.now();
     const statistics: AgentStatistics = { modelRequests: 0, toolExecutions: 0, recoverableErrors: 0, elapsedMs: 0 };
     let phase: RunnerPhase = "configuration";
-    let execution: ReturnType<typeof createAgentExecution> | undefined;
+    let execution: ReturnType<typeof createExecutionScope> | undefined;
 
     try {
       const limitsResult = limitsSchema.safeParse({ ...DEFAULT_AGENT_LIMITS, ...input.limits });
-      if (!limitsResult.success || !(input.signal instanceof AbortSignal) || !Number.isSafeInteger(input.deadline)
-        || input.deadline < 0 || typeof input.checkpoint !== "function") {
+      if (!limitsResult.success) {
         throw new AgentRunnerError("configuration", "Agent execution settings are invalid.");
       }
       const limits = limitsResult.data;
@@ -68,7 +82,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
       const registry = createToolRegistry(input.tools);
       const failedActions = new Map<string, FailureRepeatPolicy>();
       const generatedCallIds = new Set<string>();
-      execution = createAgentExecution(input.signal, input.deadline);
+      execution = createExecutionScope(input.signal, input.deadline);
       const activeExecution = execution;
       const recordToolTrace = createToolTraceRecorder({
         signal: activeExecution.signal,
@@ -209,7 +223,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
             ...traceFields,
             result: null,
             finishedAt: Date.now(),
-            error: error instanceof AgentRunnerError ? error.code : "tool_failed",
+            error: toolFailureCategory(error),
           });
           throw error;
         }

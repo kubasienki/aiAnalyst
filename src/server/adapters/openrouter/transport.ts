@@ -1,9 +1,13 @@
 import "server-only";
 import { isRecord } from "../../../shared/chat";
 import { ModelError } from "../../agent/errors";
+import { safeIdentifier } from "../../contracts/identity";
+import { createExecutionScope } from "../../execution/scope";
 import { captureTrace } from "../../observability/reporting";
 
 export const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+// One model call may use at most this long, and never past the run deadline.
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export type OpenRouterConfig = { apiKey: string; model: string; maxResponseBytes?: number };
 type FailureCategory = "network" | "http" | "invalid_response" | "completion_error" | "truncated" | "filtered" | "timeout" | "deadline" | "response_limit" | "cleanup_failed" | "trace_failed" | "trace_timeout";
@@ -36,13 +40,6 @@ export function logFailure(diagnostic: OpenRouterDiagnostic) {
   console.error("OpenRouter completion failed", diagnostic);
 }
 
-export function safeIdentifier(value: unknown): string | undefined {
-  if (typeof value === "string" && /^[a-zA-Z0-9._:/-]{1,200}$/.test(value)) {
-    return value;
-  }
-  return undefined;
-}
-
 function stopReading(body: ReadableStream<Uint8Array> | null, reportCleanupFailure: () => void): void {
   // Cleanup is best effort; it must not replace the original provider failure.
   if (body) {
@@ -54,30 +51,9 @@ function stopReading(body: ReadableStream<Uint8Array> | null, reportCleanupFailu
   }
 }
 
-function withAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    function onAbort() {
-      signal.removeEventListener("abort", onAbort);
-      reject(new DOMException("Aborted", "AbortError"));
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-    // Attach both handlers even if cancellation wins, consuming late rejections.
-    work.then(value => {
-      signal.removeEventListener("abort", onAbort);
-      resolve(value);
-    }, error => {
-      signal.removeEventListener("abort", onAbort);
-      reject(error);
-    });
-    if (signal.aborted) {
-      onAbort();
-    }
-  });
-}
-
 async function readBody(
   response: Response,
-  signal: AbortSignal,
+  scope: ReturnType<typeof createExecutionScope>,
   byteLimit: number,
   reportCleanupFailure: () => void,
 ): Promise<string> {
@@ -90,7 +66,7 @@ async function readBody(
   let bytes = 0;
   try {
     for (;;) {
-      const chunk = await withAbort(reader.read(), signal);
+      const chunk = await scope.wait(reader.read());
       if (chunk.done) {
         fragments.push(decoder.decode());
         return fragments.join("");
@@ -161,16 +137,30 @@ export function createOpenRouterTransport(
     options: { signal: AbortSignal; deadline?: number; onTrace?: (trace: TransportTrace, result: T | undefined, signal: AbortSignal) => Promise<void> },
     normalize: (envelope: CompletionEnvelope) => T,
   ): Promise<T> {
-    if (options.signal.aborted) {
-      throw new ModelError("cancelled", "The request was cancelled.");
-    }
     const startedAt = Date.now();
-    const remainingMs = options.deadline === undefined ? 60_000 : options.deadline - startedAt;
-    if (remainingMs <= 0) {
-      throw new ModelError("deadline", "The execution deadline was reached.");
+    const requestDeadline = Math.min(startedAt + REQUEST_TIMEOUT_MS, options.deadline ?? Infinity);
+    // Checked against the wall clock, not only timers, because a busy event loop
+    // delays timers and synchronous parsing can run past the deadline.
+    function stopReason(): ModelError | undefined {
+      if (options.signal.aborted) {
+        return new ModelError("cancelled", "The request was cancelled.");
+      }
+      if (options.deadline !== undefined && Date.now() >= options.deadline) {
+        return new ModelError("deadline", "The execution deadline was reached.");
+      }
+      if (Date.now() >= requestDeadline) {
+        return new ModelError("timeout", "The AI response took too long. Please retry.");
+      }
+      return undefined;
     }
-    const timeout = AbortSignal.timeout(Math.min(60_000, remainingMs));
-    const requestSignal = AbortSignal.any([options.signal, timeout]);
+    function checkExecutionBudget(): void {
+      const stop = stopReason();
+      if (stop) {
+        throw stop;
+      }
+    }
+    checkExecutionBudget();
+    const scope = createExecutionScope(options.signal, requestDeadline);
     const diagnostic: OpenRouterDiagnostic = { category: "network", model: config.model };
     let rawResponseBody: string | null = null;
     let completedResult: T | undefined;
@@ -185,51 +175,31 @@ export function createOpenRouterTransport(
     function reportCleanupFailure(): void {
       reportDiagnostic("cleanup_failed");
     }
-    // Timers can be delayed by a busy event loop. Check wall-clock budgets too,
-    // including after synchronous response parsing/validation.
-    const requestDeadline = Math.min(startedAt + 60_000, options.deadline ?? Infinity);
-    function checkExecutionBudget(): void {
-      if (options.signal.aborted) {
-        throw new ModelError("cancelled", "The request was cancelled.");
-      }
-      if (options.deadline !== undefined && Date.now() >= options.deadline) {
-        throw new ModelError("deadline", "The execution deadline was reached.");
-      }
-      if (timeout.aborted || Date.now() >= requestDeadline) {
-        throw new ModelError("timeout", "The AI response took too long. Please retry.");
-      }
-    }
 
     try {
       const responsePromise = fetcher("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: requestSignal,
+        signal: scope.signal,
       }).then(response => {
-        // Native fetch obeys abort. Injected/custom transports may resolve later;
-        // dispose their body even after the caller has stopped waiting.
-        if (requestSignal.aborted) {
+        // Native fetch obeys abort. Injected/custom transports may resolve after a
+        // stop; dispose their body, since the caller has stopped waiting for it.
+        if (stopReason()) {
           stopReading(response.body, reportCleanupFailure);
         }
         return response;
       });
-      const response = await withAbort(responsePromise, requestSignal);
+      const response = await scope.wait(responsePromise);
       diagnostic.status = response.status;
       diagnostic.requestId = safeIdentifier(response.headers.get("x-request-id"));
-      try {
-        checkExecutionBudget();
-      } catch (error) {
-        stopReading(response.body, reportCleanupFailure);
-        throw error;
-      }
 
       if (!response.ok && response.status !== 400) {
         diagnostic.category = "http";
         const responseLengthHeader = response.headers.get("content-length");
         const responseLength = responseLengthHeader === null ? Number.NaN : Number(responseLengthHeader);
         if (Number.isSafeInteger(responseLength) && responseLength >= 0 && responseLength <= byteLimit) {
-          rawResponseBody = await readBody(response, requestSignal, byteLimit, reportCleanupFailure);
+          rawResponseBody = await readBody(response, scope, byteLimit, reportCleanupFailure);
         } else {
           // Unknown-length error streams are disposed instead of risking a stalled model call.
           stopReading(response.body, reportCleanupFailure);
@@ -238,7 +208,7 @@ export function createOpenRouterTransport(
       }
 
       diagnostic.category = "invalid_response";
-      const responseBody = await readBody(response, requestSignal, byteLimit, reportCleanupFailure);
+      const responseBody = await readBody(response, scope, byteLimit, reportCleanupFailure);
       rawResponseBody = responseBody;
       checkExecutionBudget();
       let payload: unknown;
@@ -284,20 +254,16 @@ export function createOpenRouterTransport(
       completed = true;
       return result;
     } catch (error) {
-      if (options.signal.aborted) {
-        throw new ModelError("cancelled", "The request was cancelled.");
+      // A stop wins over whatever failure it caused, such as an aborted read.
+      const stop = stopReason();
+      if (stop?.code === "cancelled") {
+        throw stop;
       }
-      if (timeout.aborted) {
-        const deadlineReached = options.deadline !== undefined && Date.now() >= options.deadline;
-        diagnostic.category = deadlineReached ? "deadline" : "timeout";
-        error = new ModelError(diagnostic.category, deadlineReached
-          ? "The execution deadline was reached."
-          : "The AI response took too long. Please retry.");
+      if (stop) {
+        error = stop;
       }
-      if (error instanceof ModelError && error.code === "response_limit") {
-        diagnostic.category = "response_limit";
-      }
-      if (error instanceof ModelError && (error.code === "deadline" || error.code === "timeout")) {
+      if (error instanceof ModelError
+        && (error.code === "response_limit" || error.code === "deadline" || error.code === "timeout")) {
         diagnostic.category = error.code;
       }
       reportDiagnostic(diagnostic.category);
@@ -306,6 +272,7 @@ export function createOpenRouterTransport(
       }
       throw new ModelError("provider", "The AI provider could not be reached. Please retry.");
     } finally {
+      scope.dispose();
       if (options.onTrace) {
         const onTrace = options.onTrace;
         const finishedAt = Date.now();

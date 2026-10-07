@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { externalIdentifierSchema } from "../contracts/identity";
 import { jsonValueSchema } from "../contracts/json";
 import { assistantMessageSchema, modelMessageSchema, type ModelMessage, type ModelResponse, type RegisteredTool } from "./contracts";
 import { inspectMessageSequence } from "./message-sequence";
@@ -21,7 +22,7 @@ const tokenCount = z.number().int().nonnegative().safe();
 const responseSchema = z.strictObject({
   message: assistantMessageSchema,
   finishReason: z.enum(["stop", "tool_calls"]),
-  requestId: z.string().regex(/^[a-zA-Z0-9._:/-]{1,200}$/).optional(),
+  requestId: externalIdentifierSchema.optional(),
   usage: z.strictObject({
     inputTokens: tokenCount, outputTokens: tokenCount,
     cachedInputTokens: tokenCount.optional(), reasoningTokens: tokenCount.optional(),
@@ -52,8 +53,7 @@ export function createToolRegistry<TContext, TOutcome, TArtifact>(tools: Registe
   const registry = new Map<string, RegisteredTool<TContext, TOutcome, TArtifact>>();
   for (const tool of tools) {
     const parsed = descriptionSchema.safeParse(tool);
-    if (!parsed.success || typeof tool.execute !== "function"
-      || (tool.isAvailable !== undefined && typeof tool.isAvailable !== "function") || registry.has(tool.name)) {
+    if (!parsed.success || registry.has(tool.name)) {
       throw new AgentRunnerError("configuration", "Tool definitions must be valid and have unique names.");
     }
     registry.set(tool.name, { ...tool, ...parsed.data });
