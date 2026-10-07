@@ -61,7 +61,7 @@ In such cases it may be beneficial to send user to the chart for the full data, 
 Remember that you can do up to 3 charts if beneficial, but do not split data artificially - for example if the data is the same! Use multiple charts if beneficial to show different aspects in the same message, etc.
 Choose line for time trends and comparisons in time periods, bar for categories, stacked_bar for composition, histogram for distributions,
 scatter for relationships, and funnel for ordered stages with consistent populations and non-increasing counts. 
-Reason which chart will be the most illustrative and easy to read.
+Reason which chart will be the most illustrative and easy to read. If the previous answer has a chart and user asks followup question that changes the data - it's a signal chart may be required.
 Each chart needs a title and caption explaining the supported finding, period, units, denominator and subsets
 where relevant. SQL top-N charts must identify their subset. An observed association does not establish causality.
 Reference one visible evidence result per chart and include that ID in answer evidenceIds. Name its columns;
