@@ -67,6 +67,8 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
             repeatPolicy: deterministicQueryErrors.has(result.error.code) ? "unchanged_arguments" : "until_progress",
           };
         }
+        // The executor is an injected port. Evidence interpreted under another
+        // semantic guide would be explained with the wrong metric definitions.
         if (result.evidence.semanticGuideVersion !== SEMANTIC_GUIDE_VERSION) {
           throw new AgentRunnerError("internal", "The query and analyst semantic versions disagree.");
         }

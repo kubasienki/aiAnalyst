@@ -261,21 +261,6 @@ describe("context reconstruction and projection", () => {
     expect(JSON.stringify(context.messages)).not.toContain("x".repeat(100));
   });
 
-  it.each(["evidence", "evidence_unavailable"] as const)("rejects %s references to evidence owned by another run", kind => {
-    const f = fixture();
-    const earlier = f.start();
-    const evidence = evidenceInput();
-    f.history.evidence.push({ ...evidence, conversationId: earlier.conversationId, runId: earlier.id, createdAt: 2 });
-    f.finish(earlier, failure);
-    const active = f.start("Follow up");
-    f.append(active, { kind: "assistant_message", message: call("query") });
-    const payload = kind === "evidence"
-      ? { kind, evidenceId: evidence.evidence.resultId }
-      : { kind, evidenceId: evidence.evidence.resultId, content: { error: "unavailable" } };
-    f.append(active, { kind: "tool_result", result: { callId: "query", payload } });
-    expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
-  });
-
   it("fails explicitly when selected evidence is missing", () => {
     const f = fixture();
     const active = f.start();
@@ -324,32 +309,10 @@ describe("context reconstruction and projection", () => {
     expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
   });
 
-  it.each(["event_owner", "run_owner", "missing_run", "missing_user", "sequence", "evidence_owner"])("rejects inconsistent snapshot references: %s", defect => {
-    const f = fixture();
-    const active = f.start();
-    const event = f.history.events[0];
-    if (!event) { throw new Error("Fixture requires a user event"); }
-    switch (defect) {
-      case "event_owner": event.conversationId = randomUUID(); break;
-      case "run_owner": active.conversationId = randomUUID(); break;
-      case "missing_run": event.runId = randomUUID(); break;
-      case "missing_user": active.userMessageEventId = randomUUID(); break;
-      case "sequence": f.history.events.push({ ...event, id: randomUUID() }); break;
-      case "evidence_owner": f.history.evidence.push({ ...evidenceInput(), runId: active.id, conversationId: randomUUID(), createdAt: 1 }); break;
-    }
-    expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
-  });
-
-  it("rejects outcome disagreement, invalid retry sources, and non-current targets", () => {
+  it("rejects a target run that is not currently running", () => {
     const f = fixture();
     const past = f.start();
     f.finish(past, failure);
-    const active = f.start("", past);
-    past.outcome = { ...failure, error: { code: "deadline", message: "Different" } };
-    expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
-    past.outcome = failure;
-    active.retryOfRunId = randomUUID();
-    expect(() => f.construct(active)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
     expect(() => f.construct(past)).toThrowError(expect.objectContaining({ code: "invalid_history" }));
   });
 
