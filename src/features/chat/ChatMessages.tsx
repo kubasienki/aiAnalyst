@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import type { ConversationSnapshot, DisplayAttempt } from "../../shared/conversations";
 import styles from "./chat.module.css";
 import { AnswerChart } from "../charts/AnswerChart";
+import { AnalysisDetails } from "./AnalysisDetails";
 
 type Props = {
   snapshot: ConversationSnapshot;
@@ -40,18 +41,7 @@ function AttemptOutcome({ attempt, choicesEnabled, onChoice }: {
           {outcome.answer.completeness === "partial" && <p className={styles.messageAuthor}>Partial answer</p>}
           <p className={styles.messageContent}>{outcome.answer.narrative}</p>
           {attempt.renderedCharts?.map((chart, index) => <AnswerChart key={index} chart={chart} />)}
-          {outcome.answer.assumptions.length > 0 && (
-            <div className={styles.answerDetails}>
-              <p>Assumptions</p>
-              <ul>{outcome.answer.assumptions.map((text, index) => <li key={index}>{text}</li>)}</ul>
-            </div>
-          )}
-          {outcome.answer.limitations.length > 0 && (
-            <div className={styles.answerDetails}>
-              <p>Limitations</p>
-              <ul>{outcome.answer.limitations.map((text, index) => <li key={index}>{text}</li>)}</ul>
-            </div>
-          )}
+          <AnalysisDetails answer={outcome.answer} />
         </>
       )}
     </article>

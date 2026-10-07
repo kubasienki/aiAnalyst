@@ -8,6 +8,37 @@ interface AnalystEvaluationCase {
 // establish whether a model's explanation is analytically correct.
 export const analystEvaluationCases: AnalystEvaluationCase[] = [
   {
+    id: "investigation-continuity",
+    questions: [
+      "How did revenue perform over the period?",
+      "Why did it fall in January?",
+      "Do the analysis.",
+      "How did you calculate conversion?",
+    ],
+    reviewCriteria: [
+      "January versus December is preserved through diagnosis and continued investigation; methodology explains the same definition.",
+      "The continuation pursues a useful open question and adds supported evidence or a specific justified obstacle; it does not simply repeat the earlier metrics.",
+      "Findings are ranked by relevance and evidence, and every quantitative claim agrees with executed SQL and rows.",
+      "Largest-contributor claims require compatible populations and a reconciled decomposition; relative metric deterioration alone is not contribution.",
+      "Necessary unresolved questions produce partial completeness, and continuing investigation is blocked only by real limits or specific obstacles.",
+      "Prose leads with the conclusion once, uses minimal supporting numbers and proportionate interpretation, and surfaces only material uncertainty.",
+      "Methodology reuses sufficient existing evidence rather than querying again merely to explain it.",
+    ],
+  },
+  {
+    id: "correction-and-topic-change",
+    questions: [
+      "What was session purchase conversion for mobile in December 2020?",
+      "Actually use desktop, and compare with November.",
+      "Which acquisition sources brought the most valuable users over the full sample period?",
+    ],
+    reviewCriteria: [
+      "The correction replaces mobile with desktop while preserving session-conversion definitions and comparing December with November.",
+      "The new acquisition question resets the device filter and period; it defaults sensibly to revenue per user with purchase rate and volume context.",
+      "Accepted context describes the actual analysis and scope, and user corrections override prior metadata.",
+    ],
+  },
+  {
     id: "checkout-chart-meaning",
     questions: [
       "Give me a charted overview of the ordered checkout journey in December 2020.",

@@ -15,6 +15,7 @@ import { createOpenRouterRequestMeasurer } from "../adapters/openrouter/request-
 import { serializeRequest } from "../adapters/openrouter/protocol";
 import { createContextBuilder } from "./builder";
 import { projectEvidence } from "./evidence";
+import { analysisMetadataFixture } from "../analysis/analysis.fixtures";
 
 const versions = { model: "test/model", prompt: "analyst-v1", tools: "tools-v1", semanticGuide: "ga4-v1" };
 const failure: RunOutcome = { kind: "failure", status: "failed", error: { code: "provider", message: "Private diagnostic" } };
@@ -107,6 +108,31 @@ function toolContents(messages: ModelMessage[]) {
 }
 
 describe("context reconstruction and projection", () => {
+  it("replays accepted metadata alongside legacy outcomes without replacing it after a failed attempt", () => {
+    const f = fixture();
+    const legacy = f.start();
+    f.terminal(legacy, answer());
+    const acceptedRun = f.start("Mobile only");
+    const outcome = answer();
+    if (outcome.kind !== "answer") {
+      throw new Error("Expected an answer fixture");
+    }
+    const analysis = analysisMetadataFixture();
+    analysis.context.filters = ["Device category = mobile"];
+    analysis.context.followupMode = "refine";
+    analysis.openQuestions = [{ question: "Does the mobile checkout show the same pattern?",
+      canInvestigate: true, requiredForAnswer: false, obstacle: null }];
+    outcome.answer.analysis = analysis;
+    f.terminal(acceptedRun, outcome);
+    const failed = f.start("Investigate checkout");
+    f.finish(failed, failure);
+    const next = f.start("How was conversion calculated?");
+    const before = structuredClone(f.history);
+    const context = f.construct(next);
+    expect(toolContents(context.messages)).toContainEqual({ acknowledgment: { accepted: true }, outcome });
+    expect(context.messages.at(-1)).toEqual({ role: "user", content: "How was conversion calculated?" });
+    expect(f.history).toEqual(before);
+  });
   it("supplies accepted chart specifications and their evidence to follow-ups", () => {
     const f = fixture();
     const past = f.start("Compare December and January revenue");

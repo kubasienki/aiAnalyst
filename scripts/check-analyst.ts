@@ -17,6 +17,9 @@ import { SEMANTIC_GUIDE_VERSION } from "../src/server/data/semantic-guide";
 import type { JsonValue } from "../src/server/contracts/json";
 import { jsonValueSchema } from "../src/server/contracts/json";
 import { ContextError } from "../src/server/context/contracts";
+import { runSqlArgumentsSchema } from "../src/server/analysis/contracts";
+import type { ConversationEvent } from "../src/server/conversations/contracts";
+import { recoverableToolErrorSchema } from "../src/server/agent/contracts";
 import { ModelError } from "../src/server/agent/errors";
 import { analystEvaluationCases } from "./analyst-evaluation-cases";
 
@@ -24,6 +27,48 @@ class VerificationFailure extends Error {
   constructor(public readonly category: string) {
     super("Live analyst verification failed.");
   }
+}
+
+function recordedSqlAttempts(events: ConversationEvent[]): JsonValue[] {
+  const attempts: JsonValue[] = [];
+  for (const event of events) {
+    if (event.payload.kind !== "assistant_message") {
+      continue;
+    }
+    for (const call of event.payload.message.toolCalls) {
+      if (call.name !== "run_sql") {
+        continue;
+      }
+      try {
+        const argumentsValue: unknown = JSON.parse(call.argumentsJson);
+        const parsed = runSqlArgumentsSchema.safeParse(argumentsValue);
+        if (parsed.success) {
+          attempts.push({ intent: parsed.data.intent, sql: parsed.data.sql });
+        }
+      } catch {
+        // A malformed call is not SQL. Never export raw provider replay data.
+      }
+    }
+  }
+  return attempts;
+}
+
+function recordedToolErrors(events: ConversationEvent[]): JsonValue[] {
+  const errors: JsonValue[] = [];
+  for (const event of events) {
+    if (event.payload.kind !== "tool_result" || event.payload.result.payload.kind !== "inline") {
+      continue;
+    }
+    const content = event.payload.result.payload.content;
+    if (content === null || typeof content !== "object" || Array.isArray(content) || content.ok !== false) {
+      continue;
+    }
+    const parsed = recoverableToolErrorSchema.safeParse(content.error);
+    if (parsed.success) {
+      errors.push(jsonValueSchema.parse(parsed.data));
+    }
+  }
+  return errors;
 }
 
 async function saveCheckpoint(repository: ConversationRepository, runId: string, event: AnalysisCheckpoint) {
@@ -100,6 +145,14 @@ async function main() {
           checkpoint: event => saveCheckpoint(repository, run.id, event) });
         if (result.kind === "failure") {
           await repository.finishRun(run.id, { outcome: { kind: "failure", status: result.error.code === "cancelled" ? "cancelled" : "failed", error: result.error } });
+          const failedHistory = await repository.loadHistory(conversation.id);
+          report.push({ caseId: evaluationCase.id, reviewCriteria: evaluationCase.reviewCriteria,
+            reviewStatus: "execution_failed", question, versions, statistics: result.statistics,
+            error: result.error, contextMeasurement: jsonValueSchema.parse(context.measurement),
+            sqlAttempts: recordedSqlAttempts(failedHistory.events.filter(event => event.runId === run.id)),
+            toolErrors: recordedToolErrors(failedHistory.events.filter(event => event.runId === run.id)) });
+          mkdirSync(".data", { recursive: true });
+          writeFileSync(".data/analyst-check-report.json", JSON.stringify(report, null, 2));
           throw new VerificationFailure(result.error.code);
         }
         if (result.outcome.kind !== "answer") {
@@ -119,6 +172,9 @@ async function main() {
         assert.equal(supportingEvidence.length, result.outcome.answer.evidenceIds.length);
         report.push({ caseId: evaluationCase.id, reviewCriteria: evaluationCase.reviewCriteria,
           reviewStatus: "pending", question, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics,
+          versions,
+          contextMeasurement: jsonValueSchema.parse(context.measurement),
+          toolErrors: recordedToolErrors(reopened.events.filter(event => event.runId === run.id)),
           evidence: supportingEvidence.map(item => ({ resultId: item.evidence.resultId, intent: item.declaredScope?.intent ?? null,
             sql: item.evidence.sql, rows: item.evidence.rows, truncated: item.evidence.truncated, jobId: item.evidence.jobId })) });
         mkdirSync(".data", { recursive: true });

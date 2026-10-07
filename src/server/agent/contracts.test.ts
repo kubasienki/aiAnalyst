@@ -2,8 +2,28 @@ import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { assistantMessageSchema, modelMessageSchema, providerReplaySchema } from "./contracts";
 import { ANALYSIS_TOOL_DESCRIPTIONS, analysisOutcomeSchema, answerSchema, runSqlArgumentsSchema } from "../analysis/contracts";
+import { analysisMetadataSchema } from "../../shared/analysis-metadata";
+import { analysisMetadataFixture } from "../analysis/analysis.fixtures";
 
 describe("agent contracts", () => {
+  it("validates accepted interpretation dates and bounds at runtime", () => {
+    const metadata = analysisMetadataFixture();
+    expect(analysisMetadataSchema.parse(metadata)).toEqual(metadata);
+    for (const period of [
+      { start: "2020-12-31", end: "2020-12-01" },
+      { start: "2020-02-30", end: "2020-12-31" },
+    ]) {
+      expect(analysisMetadataSchema.safeParse({
+        ...metadata,
+        context: { ...metadata.context, period },
+      }).success).toBe(false);
+    }
+    expect(analysisMetadataSchema.safeParse({
+      ...metadata,
+      context: { ...metadata.context, question: "x".repeat(1_001) },
+    }).success).toBe(false);
+  });
+
   it("represents a question, tool call, result, and final action", () => {
     const messages = [
       { role: "user", content: "December revenue?" },

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MAX_ASSISTANT_MESSAGE_LENGTH } from "./chat";
 import { answerChartsSchema } from "./charts";
+import { analysisMetadataSchema } from "./analysis-metadata";
 
 const nonemptyText = z.string().trim().min(1);
 
@@ -17,6 +18,8 @@ export const answerSchema = z.strictObject({
   completeness: z.enum(["complete", "partial"]),
   // Older saved answers have no chart specifications.
   charts: answerChartsSchema.optional(),
+  // Optional only for historical outcomes. New terminal submissions require it.
+  analysis: analysisMetadataSchema.optional(),
 }).refine(answer => new Set(answer.evidenceIds).size === answer.evidenceIds.length, {
   message: "Evidence references must be unique.",
 });

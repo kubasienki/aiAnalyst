@@ -8,6 +8,7 @@ import { createAgentRunner } from "../agent/runner";
 import { ModelError } from "../agent/errors";
 import { createAnalysisService } from "../analysis/service";
 import { ANALYSIS_TOOL_DESCRIPTIONS } from "../analysis/contracts";
+import { analysisMetadataFixture } from "../analysis/analysis.fixtures";
 import { createOpenRouterRequestMeasurer } from "../adapters/openrouter/request-measurer";
 import { openConversationRepository } from "../adapters/persistence/repository";
 import { createContextBuilder } from "../context/builder";
@@ -44,6 +45,7 @@ function action(name: string, argumentsValue: unknown): ModelResponse {
 function answer(evidenceIds: string[] = []) {
   return {
     basis: evidenceIds.length > 0 ? "data" : "explanation",
+    analysis: analysisMetadataFixture(evidenceIds),
     narrative: "A supported answer.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", charts: [],
   };
 }

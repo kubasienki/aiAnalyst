@@ -177,6 +177,7 @@ export function createAgentRunner(dependencies: AgentRunnerDependencies) {
         try {
           result = await activeExecution.wait(action.tool.execute(action.argumentsValue, {
             applicationContext: input.applicationContext,
+            canContinue: availableTools().some(tool => tool.role === "continuing"),
             signal: activeExecution.signal,
             deadline: input.deadline,
             checkContinuation(content) {

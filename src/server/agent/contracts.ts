@@ -119,6 +119,8 @@ export type FailureRepeatPolicy = "unchanged_arguments" | "until_progress";
 
 export type ToolInvocationContext<TContext> = {
   applicationContext: TContext;
+  // Describes the next model request, including the reserved terminal-only call.
+  canContinue: boolean;
   signal: AbortSignal;
   deadline: number;
   checkContinuation(content: JsonValue): void;

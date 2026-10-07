@@ -16,6 +16,7 @@ import {
   finishAnswerArgumentsSchema, inspectDatasetArgumentsSchema, runSqlArgumentsSchema, type AnalysisOutcome,
 } from "./contracts";
 import type { AnalysisEvidenceArtifact, AnalysisRunState } from "./types";
+import { validateAnalyticalAnswer } from "./answer-validation";
 
 type AnalysisTool = RegisteredTool<AnalysisRunState, AnalysisOutcome, AnalysisEvidenceArtifact>;
 type AnalysisExecution = ToolExecution<AnalysisOutcome, AnalysisEvidenceArtifact>;
@@ -132,6 +133,10 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
         }
         if (answer.evidenceIds.some(id => !evidence.has(id))) {
           return { kind: "error", error: { code: "invalid_evidence", message: "Reference only evidence belonging to this conversation and supplied with rows in the current context." } };
+        }
+        const analyticalError = validateAnalyticalAnswer(argumentsValue, invocation);
+        if (analyticalError) {
+          return { kind: "error", error: analyticalError, repeatPolicy: "until_progress" };
         }
         const referencesTruncation = answer.evidenceIds.some(id => evidence.get(id)?.evidence.truncated);
         if (referencesTruncation && (answer.completeness !== "partial" || answer.limitations.length === 0)) {

@@ -19,6 +19,7 @@ import { buildAnalystInstructions } from "./prompt";
 import { createAnalysisService } from "./service";
 import { createAnalysisTools } from "./tools";
 import type { AnalysisCheckpoint, AnalysisRunInput, AnalysisRunState } from "./types";
+import { analysisMetadataFixture } from "./analysis.fixtures";
 
 const conversationId = randomUUID();
 const directories: string[] = [];
@@ -55,7 +56,7 @@ function action(name: string, args: unknown): ModelResponse {
 }
 
 function answer(evidenceIds: string[] = [], overrides = {}) {
-  return { basis: "data", narrative: "Revenue was $160,555 in December 2020.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", charts: [], ...overrides };
+  return { basis: "data", narrative: "Revenue was $160,555 in December 2020.", assumptions: [], limitations: [], evidenceIds, completeness: "complete", charts: [], analysis: analysisMetadataFixture(evidenceIds), ...overrides };
 }
 
 function runInput(overrides: Partial<AnalysisRunInput> = {}): AnalysisRunInput {
@@ -77,7 +78,7 @@ function modelSequence(...steps: ((request: ModelRequest) => ModelResponse)[]): 
 
 function toolInvocation(visible = new Map<string, EvidenceInput>()): ToolInvocationContext<AnalysisRunState> {
   const queryExecution = createExecutionContext();
-  return { applicationContext: { queryExecution, visibleEvidence: visible }, signal: queryExecution.signal,
+  return { applicationContext: { queryExecution, visibleEvidence: visible }, canContinue: true, signal: queryExecution.signal,
     deadline: queryExecution.deadline, checkContinuation: vi.fn() };
 }
 
@@ -211,7 +212,118 @@ describe("analytical tools", () => {
   });
 });
 
+describe("analytical answer acceptance", () => {
+  function diagnosis(id: string) {
+    const analysis = analysisMetadataFixture([id]);
+    analysis.context.intent = "diagnosis";
+    analysis.context.question = "Which devices explain the revenue change?";
+    analysis.openQuestions = [{ question: "Did mobile conversion deteriorate more than desktop?",
+      canInvestigate: true, requiredForAnswer: true, obstacle: null }];
+    return answer([id], { analysis, completeness: "partial", limitations: ["Device conversion differences remain untested."] });
+  }
+
+  it("requires metadata for new answers", async () => {
+    const { analysis: _analysis, ...legacy } = answer([], { basis: "explanation" });
+    expect(_analysis.version).toBe(1);
+    expect(await tool("finish_answer").execute(legacy, toolInvocation()))
+      .toMatchObject({ kind: "error", error: { code: "invalid_arguments" } });
+  });
+
+  it("rejects findings without evidence included in the answer", async () => {
+    const first = savedEvidence();
+    const second = savedEvidence();
+    const invocation = toolInvocation(new Map([[first.evidence.resultId, first], [second.evidence.resultId, second]]));
+    expect(await tool("finish_answer").execute(answer([first.evidence.resultId], {
+      analysis: analysisMetadataFixture([second.evidence.resultId]),
+    }), invocation)).toMatchObject({ kind: "error", error: { code: "invalid_evidence" } });
+    expect(await tool("finish_answer").execute(answer([first.evidence.resultId], {
+      analysis: analysisMetadataFixture(),
+    }), invocation)).toMatchObject({ kind: "error", error: { code: "missing_findings" } });
+  });
+
+  it("blocks an early partial diagnosis when its necessary question is investigable", async () => {
+    const input = savedEvidence();
+    expect(await tool("finish_answer").execute(diagnosis(input.evidence.resultId),
+      toolInvocation(new Map([[input.evidence.resultId, input]]))))
+      .toMatchObject({ kind: "error", error: { code: "investigation_required" }, repeatPolicy: "until_progress" });
+  });
+
+  it.each(["model_calls", "sql_attempts", "result_bytes"])("allows partial completion at the %s limit", async limit => {
+    const input = savedEvidence();
+    const invocation = toolInvocation(new Map([[input.evidence.resultId, input]]));
+    if (limit === "model_calls") {
+      invocation.canContinue = false;
+    } else if (limit === "sql_attempts") {
+      invocation.applicationContext.queryExecution.budget.attemptsUsed = 4;
+    } else {
+      const budget = invocation.applicationContext.queryExecution.budget;
+      budget.resultBytesUsed = budget.maxResultBytes;
+    }
+    expect(await tool("finish_answer").execute(diagnosis(input.evidence.resultId), invocation))
+      .toMatchObject({ kind: "terminal", outcome: { answer: { completeness: "partial" } } });
+  });
+
+  it("does not block completion for optional exploration", async () => {
+    const input = savedEvidence();
+    const analysis = analysisMetadataFixture([input.evidence.resultId]);
+    analysis.context.intent = "diagnosis";
+    analysis.openQuestions = [{ question: "Which countries show the same pattern?", canInvestigate: true, requiredForAnswer: false, obstacle: null }];
+    expect(await tool("finish_answer").execute(answer([input.evidence.resultId], { analysis }),
+      toolInvocation(new Map([[input.evidence.resultId, input]]))))
+      .toMatchObject({ kind: "terminal", outcome: { answer: { completeness: "complete" } } });
+  });
+
+  it("permits specific data obstacles but rejects false completeness and missing limitations", async () => {
+    const input = savedEvidence();
+    const analysis = analysisMetadataFixture([input.evidence.resultId]);
+    analysis.context.intent = "diagnosis";
+    analysis.openQuestions = [{ question: "Did competitors cause the decline?", canInvestigate: false,
+      requiredForAnswer: true, obstacle: "Competitor prices and experiments are absent from this dataset." }];
+    const invocation = toolInvocation(new Map([[input.evidence.resultId, input]]));
+    const partial = answer([input.evidence.resultId], { analysis, completeness: "partial", limitations: ["Competitor prices and causal identification are unavailable."] });
+    expect(await tool("finish_answer").execute(partial, invocation)).toMatchObject({ kind: "terminal" });
+    expect(await tool("finish_answer").execute({ ...partial, completeness: "complete" }, invocation))
+      .toMatchObject({ kind: "error", error: { code: "incomplete_investigation" } });
+    expect(await tool("finish_answer").execute({ ...partial, limitations: [] }, invocation))
+      .toMatchObject({ kind: "error", error: { code: "missing_limitation" } });
+    analysis.openQuestions[0].obstacle = null;
+    expect(await tool("finish_answer").execute(partial, invocation))
+      .toMatchObject({ kind: "error", error: { code: "missing_obstacle" } });
+  });
+});
+
 describe("analysis service", () => {
+  it("turns early-finish feedback into another test before accepting a diagnosis", async () => {
+    const stored = savedEvidence();
+    const nextEvidence = evidence();
+    const analysis = analysisMetadataFixture([stored.evidence.resultId]);
+    analysis.context.intent = "diagnosis";
+    analysis.context.followupMode = "continue";
+    analysis.openQuestions = [{ question: "Did mobile purchase conversion decline?", canInvestigate: true,
+      requiredForAnswer: true, obstacle: null }];
+    const earlyAnswer = answer([stored.evidence.resultId], { analysis, completeness: "partial",
+      limitations: ["The mobile comparison remains untested."] });
+    const completeAnalysis = analysisMetadataFixture([stored.evidence.resultId, nextEvidence.resultId]);
+    completeAnalysis.context = analysis.context;
+    const model = modelSequence(
+      () => action("finish_answer", earlyAnswer),
+      request => {
+        expect(JSON.stringify(request.messages.at(-1))).toContain("investigation_required");
+        return action("run_sql", { intent: "Test the mobile conversion change over comparable periods.", sql: "SELECT 1" });
+      },
+      () => action("finish_answer", answer([stored.evidence.resultId, nextEvidence.resultId], { analysis: completeAnalysis })),
+    );
+    const execute: QueryExecutor = vi.fn<QueryExecutor>(async () => ({ ok: true, evidence: nextEvidence }));
+    const output = await analyzeWith(model, execute)(runInput({
+      storedEvidence: [stored], context: { includedEvidenceIds: [stored.evidence.resultId], messages: [
+        { role: "assistant", content: null, toolCalls: [{ callId: "prior", name: "run_sql", argumentsJson: "{}" }] },
+        { role: "tool", callId: "prior", content: projectEvidence(stored) },
+        { role: "user", content: "Do the analysis" },
+      ] },
+    }));
+    expect(output).toMatchObject({ kind: "terminal", statistics: { modelRequests: 3, recoverableErrors: 1 } });
+    expect(execute).toHaveBeenCalledOnce();
+  });
   it("repairs an early finish, checkpoints intent/evidence, then accepts the identical answer", async () => {
     const result = evidence();
     const checkpoints: AnalysisCheckpoint[] = [];

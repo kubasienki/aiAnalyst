@@ -85,6 +85,19 @@ afterEach(() => {
 });
 
 describe("bounded agent runner", () => {
+  it("reports next-request continuation capability including the terminal-only reservation", async () => {
+    const f = setup([
+      ...Array.from({ length: 5 }, () => action("query", '{"sql":"SELECT 1"}')),
+      action(),
+    ]);
+    const capabilities: boolean[] = [];
+    f.input.tools = tools(async context => {
+      capabilities.push(context.canContinue);
+      return { kind: "continue", content: { ok: true } };
+    });
+    expect(await f.run(f.input)).toMatchObject({ kind: "terminal", statistics: { modelRequests: 6 } });
+    expect(capabilities).toEqual([true, true, true, true, false]);
+  });
   it("completes only after the terminal checkpoint and preserves caller messages", async () => {
     const f = setup();
     const before = structuredClone(f.input.messages);

@@ -17,6 +17,8 @@ For analysis, configure `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `GOOGLE_CLOUD_
 
 Each turn runs as a bounded analytical attempt and persists its question, tool activity, evidence, and accepted outcome in SQLite. The API streams only coarse progress and a terminal answer, clarification, or safe failure; provider reasoning and intermediate tool records stay on the server. A conversation revision prevents stale tabs from submitting unseen context, and a stable submission ID makes reconnects idempotent. Browser history is a server snapshot. A small per-tab pending record lets reload reconcile uncertain delivery before offering a resend. See [the conversation decision record](docs/conversation-service-and-chat.md) for request and recovery behavior.
 
+New answers save compact analytical context, evidence-linked findings and useful open questions inside their accepted outcome. A diagnostic answer cannot finish early with a necessary question that can still be investigated; execution limits or a specific obstacle permit supported partial findings. Prose leads with the conclusion, while expandable analysis details keep assumptions and evidence references secondary. See [the investigation quality decisions](docs/investigation-quality.md) for boundaries, limitations and conversational evaluation.
+
 Configure `SQLITE_DATABASE_PATH` to keep the SQLite database outside Git. This local assessment has no accounts or per-user access control; do not expose it to untrusted users.
 
 ## Commands
