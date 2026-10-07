@@ -1,17 +1,22 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
-import { MAX_MESSAGE_LENGTH } from "./types";
+import type { FormEvent, KeyboardEvent } from "react";
+import { MAX_USER_MESSAGE_LENGTH } from "../../shared/chat";
 import styles from "./chat.module.css";
 
-type ChatComposerProps = { onSend: (message: string) => void; disabled: boolean };
+type ChatComposerProps = {
+  draft: string;
+  onDraftChange: (draft: string) => void;
+  onSend: () => void;
+  disabled: boolean;
+};
 
-export function ChatComposer({ onSend, disabled }: ChatComposerProps) {
-  const [draft, setDraft] = useState("");
-
+export function ChatComposer({ draft, onDraftChange, onSend, disabled }: ChatComposerProps) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || !draft.trim()) return;
-    onSend(draft);
-    setDraft("");
+    if (disabled || !draft.trim()) {
+      return;
+    }
+    // Acceptance, rather than clicking Send, clears the draft.
+    onSend();
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -27,10 +32,10 @@ export function ChatComposer({ onSend, disabled }: ChatComposerProps) {
       <textarea
         id="chat-message"
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={event => onDraftChange(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="How did revenue change from November to December?"
-        maxLength={MAX_MESSAGE_LENGTH}
+        maxLength={MAX_USER_MESSAGE_LENGTH}
         rows={3}
         disabled={disabled}
         aria-describedby="composer-hint"

@@ -1,40 +1,28 @@
 import "server-only";
 import { z } from "zod";
-import { MAX_ASSISTANT_MESSAGE_LENGTH } from "../../shared/chat";
+import { clarificationSchema, answerSchema } from "../../shared/analysis";
 
 const nonemptyText = z.string().trim().min(1);
 
-export const runSqlArgumentsSchema = z.strictObject({ sql: nonemptyText.max(64 * 1024) });
-
-export const clarificationSchema = z.strictObject({
-  question: nonemptyText.max(2_000),
-  choices: z.array(nonemptyText.max(500)).min(2).max(5).optional(),
+export const runSqlArgumentsSchema = z.strictObject({
+  intent: nonemptyText.max(2_000).describe("Explain the question, date range, metric, filters, and expected row grain. This is a declaration, not proof of SQL correctness."),
+  sql: nonemptyText.max(32 * 1024).refine(sql => Buffer.byteLength(sql, "utf8") <= 32 * 1024, {
+    message: "SQL must fit 32 KiB of UTF-8.",
+  }),
 });
 
-export const answerSchema = z.strictObject({
-  narrative: nonemptyText.max(MAX_ASSISTANT_MESSAGE_LENGTH),
-  assumptions: z.array(nonemptyText.max(2_000)).max(20),
-  limitations: z.array(nonemptyText.max(2_000)).max(20),
-  evidenceIds: z.array(z.uuid()).max(100),
-  completeness: z.enum(["complete", "partial"]),
-}).refine(answer => new Set(answer.evidenceIds).size === answer.evidenceIds.length, {
-  message: "Evidence references must be unique.",
+export { clarificationSchema, answerSchema, analysisOutcomeSchema } from "../../shared/analysis";
+export type { AnalysisOutcome, Answer, Clarification } from "../../shared/analysis";
+
+// Basis belongs to the tool invocation, keeping stored Answer outcomes compatible.
+export const finishAnswerArgumentsSchema = answerSchema.safeExtend({
+  basis: z.enum(["data", "explanation"]).describe("Use data for any finding about this dataset. Explanation is only for conceptual guidance without empirical claims."),
 });
 
-export const analysisOutcomeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("answer"), answer: answerSchema }),
-  z.strictObject({ kind: z.literal("clarification"), clarification: clarificationSchema }),
-]);
-
-export type AnalysisOutcome = z.infer<typeof analysisOutcomeSchema>;
-export type Answer = z.infer<typeof answerSchema>;
-export type Clarification = z.infer<typeof clarificationSchema>;
-
-// Only descriptions and schemas are defined here; execution is a later stage.
 export const ANALYSIS_TOOL_DESCRIPTIONS = [
   {
     name: "run_sql",
-    description: "Obtain evidence using guarded read-only BigQuery SQL following the supplied semantic guide.",
+    description: "Obtain evidence using guarded read-only BigQuery SQL. Declare intent first, then review returned SQL, scope, grain, units, rows, and completeness before using the evidence.",
     parameters: z.toJSONSchema(runSqlArgumentsSchema, { target: "draft-07" }),
   },
   {
@@ -45,6 +33,6 @@ export const ANALYSIS_TOOL_DESCRIPTIONS = [
   {
     name: "finish_answer",
     description: "Finish with a supported narrative, assumptions, limitations, and evidence references. Ends this run.",
-    parameters: z.toJSONSchema(answerSchema, { target: "draft-07" }),
+    parameters: z.toJSONSchema(finishAnswerArgumentsSchema, { target: "draft-07" }),
   },
 ];

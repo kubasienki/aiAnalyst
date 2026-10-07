@@ -1,6 +1,6 @@
 # HockeyStack Analyst
 
-Next.js App Router and TypeScript application with an OpenRouter-powered chat and a separate guarded BigQuery data layer.
+Next.js App Router analytics assistant using a bounded agent loop, OpenRouter and guarded BigQuery queries.
 
 ## Local development
 
@@ -11,20 +11,20 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. Try an example question or type a message. Enter sends; Shift + Enter adds a line. New conversation clears history and the draft.
+Open http://localhost:3000. Try an example question or type a message. Enter sends; Shift + Enter adds a line. New conversation starts a separate server conversation.
 
-For AI replies, copy `.env.example` to `.env.local` and set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` to an OpenRouter model ID available to your account. Restart the development server after changing configuration. Keys stay on the server; no Google credentials are needed for chat. See the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart) for keys and model IDs.
+For analysis, configure `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `GOOGLE_CLOUD_PROJECT`, and Google Application Default Credentials. The OpenRouter key and warehouse credentials stay on the server. See the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart) for keys and model IDs.
 
-Chat sends one non-streaming model request per turn through `POST /api/chat`. The recent conversation is included for follow-up questions. The model has no tools or dataset access yet and is instructed not to invent analytical results. Loading and retry states are shown; New conversation cancels the browser request and prevents an old reply from entering the new conversation. Provider requests have a 60-second deadline and a 2,000-token output ceiling, with no automatic retries. Incomplete or filtered replies are reported as failures rather than saved as completed answers. Sending a follow-up after a failure preserves the unanswered question; retry resends the existing conversation.
+Each turn runs as a bounded analytical attempt and persists its question, tool activity, evidence, and accepted outcome in SQLite. The API streams only coarse progress and a terminal answer, clarification, or safe failure; provider reasoning and intermediate tool records stay on the server. A conversation revision prevents stale tabs from submitting unseen context, and a stable submission ID makes reconnects idempotent. Browser history is a server snapshot. A small per-tab pending record lets reload reconcile uncertain delivery before offering a resend. See [the conversation decision record](docs/conversation-service-and-chat.md) for request and recovery behavior.
 
-The latest 40 messages are saved in this browser; storage failures leave the conversation usable in memory. Context sent to the model is bounded to 39 messages and 64,000 characters, dropping older turns when needed. Browser history is client-supplied, not durable server conversation storage. This initial endpoint has no authentication or per-user rate limiting and is intended for local development.
+Configure `SQLITE_DATABASE_PATH` to keep the SQLite database outside Git. This local assessment has no accounts or per-user access control; do not expose it to untrusted users.
 
 ## Commands
 
 - `npm run dev`: start the development server.
 - `npm run lint`: run ESLint.
 - `npm run typecheck`: check TypeScript types.
-- `npm test`: run deterministic data-layer and chat tests with fake external dependencies.
+- `npm test`: run deterministic data, agent, conversation, and browser state tests with fake external dependencies.
 - `npm run build`: create a production build.
 - `npm start`: serve a production build.
 - `npm run bigquery:check`: dry-run a fixed one-day GA4 query to check access.
@@ -34,7 +34,7 @@ The latest 40 messages are saved in this browser; storage failures leave the con
 
 ## BigQuery setup
 
-The server uses Google's official BigQuery SDK and Application Default Credentials (ADC). Chat does not call BigQuery yet; the connection check is a separate command. No database copy is required: Google's public project hosts the data, and your project runs query jobs.
+The server uses Google's official BigQuery SDK and Application Default Credentials (ADC). Analysis invokes the guarded query service; the connection check remains a separate command. No database copy is required: Google's public project hosts the data, and your project runs query jobs.
 
 1. Select or create a [Google Cloud project](https://console.cloud.google.com/projectselector2/home/dashboard) and [enable the BigQuery API](https://console.cloud.google.com/apis/library/bigquery.googleapis.com) in it. The query identity needs `bigquery.jobs.create`, for example through the BigQuery Job User role on that project. See [Google's prerequisites](https://developers.google.com/analytics/bigquery/web-ecommerce-demo-dataset).
 2. Install the [Google Cloud CLI](https://docs.cloud.google.com/sdk/docs/install), then sign in for application credentials:
@@ -66,7 +66,7 @@ Common setup errors: missing credentials require ADC login; a disabled API must 
 
 `createDataLayer()` composes the SQL policy, query service, and BigQuery adapter. Call the returned function with `{ sql }` and an execution context created by `createExecutionContext()`. Reuse that context across an investigation: it carries cancellation, an absolute two-minute deadline, four query attempts, and a shared 1 MiB result budget. Rejected and repaired queries consume attempts. There are no automatic application retries.
 
-The service validates SQL, dry-runs it, checks the configured processing ceiling, executes it, retrieves bounded pages, and returns an `ok` result or a typed failure. Successful evidence contains executed SQL, a stable result ID, columns/rows, job statistics, truncation, duration, and the semantic-guide version. The query service does not persist it itself; the separate conversation repository can store it when execution is connected.
+The service validates SQL, dry-runs it, checks the configured processing ceiling, executes it, retrieves bounded pages, and returns an `ok` result or a typed failure. Successful evidence contains executed SQL, a stable result ID, columns/rows, job statistics, truncation, duration, and the semantic-guide version. The query service does not persist it itself; the conversation service stores it with the corresponding tool-result checkpoint.
 
 Supported SQL includes a single GoogleSQL `SELECT`, nonrecursive CTEs, subqueries, joins, item/parameter `UNNEST`, aggregates, grouping, ordering, and supported set-operation branches. Only fully qualified sample event tables are permitted. Each wildcard scan needs literal `_TABLE_SUFFIX` equality, `BETWEEN`, or paired inclusive bounds in its own query scope. Required bounds cannot be hidden beneath `OR` or `NOT`. When other table/derived sources share a scope, qualify the suffix with that wildcard source's unique alias. Dates must be real calendar dates within November 2020–January 2021.
 
@@ -86,10 +86,10 @@ Run `npm run bigquery:verify` after configuring credentials. It executes four re
 
 ```text
 src/
-  app/                 Page shell, layout, styles, thin /api/chat route
+  app/                 Page shell, layout, styles, conversation and run API routes
   features/chat/       Chat components, useChat state hook, browser storage
   server/
-    chat/              Single-turn chat service and model boundary
+    chat/              Conversation workflow and HTTP projection
     analysis/          Analyst tool argument schemas and outcomes
     agent/             Model/tool contracts, registration, bounded attempt runner
     conversations/     Conversation/run/event contracts and repository interface
@@ -98,19 +98,19 @@ src/
     data/              Query service, SQL policy, semantic guide, execution context
     adapters/          OpenRouter, BigQuery, and SQLite persistence adapters
     config/            Server configuration and dependency composition
-  shared/              Browser-safe chat contracts and input validation
+  shared/              Browser-safe conversation and analytical outcome contracts
 scripts/               BigQuery and OpenRouter live connection checks
 ```
 
-`ChatApp` composes presentation components. `useChat` owns conversation updates, while `storage.ts` owns browser persistence and validates restored messages. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
+`ChatApp` composes presentation components. `ChatController` owns one tab’s request identities, reconciliation and polling; `chat-api.ts` validates JSON and decodes SSE; `storage.ts` validates browser recovery records. Feature styling stays in a CSS module. The page remains a minimal server-rendered shell.
 
-The chat service owns the server prompt and depends on a `ChatModel` interface. Its OpenRouter adapter owns HTTP requests, response validation, timeouts, and provider error mapping. Failures log only selected server diagnostics: category, configured model, HTTP status, a validated request ID when available, and numeric completion error codes. Raw bodies, credentials, and conversation contents are not logged. `config/chat.ts` constructs them; the route validates browser input and maps application errors to HTTP responses. This keeps the provider separate from the later analysis workflow.
+The conversation application service owns submission admission, run lifecycle, checkpoints, and safe display projection. `createAnalysisService()` owns the analytical tool state and receives reconstructed context. The bounded runner owns model/action iteration; adapters own OpenRouter, BigQuery, and SQLite details. Routes map application outcomes to HTTP and SSE without carrying workflow rules. See the implementation decision record for synchronization, retry, and failure details.
 
-The query-service, chat, adapters, and configuration entrypoints are server-only. CLI checks use the React server condition outside Next.js; Vitest resolves the server-only marker to its empty server implementation. Configuration is loaded on demand, so builds need no credentials. The bounded agent runner is implemented separately; analysis tool handlers, chat integration, conversation endpoints, charts, and streaming remain pending.
+Conversation routes are Node-only and open repositories explicitly per request. They close connections after the stream and execution settle. Configuration loads on demand, so builds need no provider credentials. Browser projections exclude assistant tool calls, reasoning, context notes, SQL, and query rows.
 
-## Conversation persistence foundation
+## Conversation persistence and execution
 
-The persistence repository is implemented separately from the current browser-only chat. It can store conversations, execution attempts, ordered assistant/tool events, and query evidence, but the chat endpoint does not call it yet. The existing chat endpoint still uses the text-only adapter; the tool-capable adapter is available separately for the bounded runner.
+The conversation repository stores conversations, execution attempts, ordered assistant/tool events, and query evidence. The conversation service now coordinates the repository, context builder, analysis service, and bounded runner.
 
 `createConversationRepository()` in `server/config/persistence.ts` explicitly opens a repository using `SQLITE_DATABASE_PATH` (default `.data/hockeystack.sqlite`). Importing modules does not open a connection. Call `close()` when its owning application or script finishes. Tests use temporary on-disk databases and verify closing/reopening without losing history.
 
@@ -120,11 +120,11 @@ Repository operations atomically begin submissions, enforce one active run per c
 
 Stored JSON is validated at write/read boundaries. While an assistant tool batch is pending, only its unresolved results or failure finalization may follow; assistant messages and context notes are rejected atomically. Query rows are stored once in evidence records, preserving numeric strings, nulls, and truncation metadata; events contain references rather than copies. Scope and assumptions attached to evidence are analyst declarations, not proof that SQL implements those definitions. The context builder reconstructs valid model messages and checks which complete requests fit; context compaction and charts are deferred.
 
-The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The tool-capable OpenRouter adapter captures and replays it, mapping `reasoning_details` without truncating blocks. Basic chat still returns text only. The runner preserves reasoning internally; the future display projection must keep it out of browser responses. Runner diagnostics exclude reasoning and conversation contents.
+The assistant contract and SQLite repository support explicit `providerReplay` data: originating model, optional provider/endpoint identity, optional plaintext `reasoning`, and structured `reasoningDetails` blocks. Persistence preserves block order, fields, signatures, and encrypted content without the former 16 KiB field cap. This is server-owned protocol data, separate from evidence and display messages. The tool-capable OpenRouter adapter captures and replays it, mapping `reasoning_details` without truncating blocks. The conversation display projection excludes reasoning. The runner preserves it internally; diagnostics exclude reasoning and conversation contents. Runner diagnostics exclude reasoning and conversation contents.
 
 ## Tool-capable model boundary
 
-`createAgentModel()` in `server/config/agent-model.ts` constructs an `AgentModel` on demand. Each `complete()` call sends one raw HTTP request. The caller supplies model messages, tool descriptions, required/none/specific tool selection, an output-token ceiling, an abort signal, and an absolute run deadline in Unix milliseconds. The adapter neither executes tools nor reads conversation storage. It can be supplied to the bounded runner; `/api/chat` does not use it yet.
+`createAgentModel()` in `server/config/agent-model.ts` constructs an `AgentModel` on demand. Each `complete()` call sends one raw HTTP request. The caller supplies model messages, tool descriptions, required/none/specific tool selection, an output-token ceiling, an abort signal, and an absolute run deadline in Unix milliseconds. The adapter neither executes tools nor reads conversation storage. The configured analysis service supplies it to the bounded runner.
 
 `protocol.ts` owns OpenRouter message mapping and runtime validation. It checks that all assistant tool calls have exactly one matching result before continuation, sends tool definitions on every request, and serializes tool results as JSON strings. Tool-call argument strings remain unchanged, including malformed JSON; unknown tool names and valid unexpected batches are returned for the runner to handle. Invalid envelopes, incomplete replies, filtered replies, and recognized context overflow produce typed `ModelError` failures. A normal text response remains representable even when tools were required, so the runner can provide bounded corrective feedback.
 
@@ -132,15 +132,15 @@ Reasoning capture records both requested and resolved model identity. Continuati
 
 The shared transport caps each request at 60 seconds or the remaining run deadline, whichever is shorter, including response-body reading. Explicit clock checks after receiving headers, reading the body, and normalizing the response enforce these budgets even when the event loop delays abort timers. Cancellation stops waiting and disposes response streams, including responses arriving late from a custom transport. `OPENROUTER_MAX_RESPONSE_BYTES` limits the complete UTF-8 response body, including reasoning (default 2 MiB). Oversized bodies fail rather than being truncated. There are no automatic retries. Agent routing requires tool parameters to be supported and disables parallel tool calls. Usage exposes reported input, output, cached-input, and reasoning tokens when available; this does not guarantee a cache hit. Failure diagnostics include elapsed milliseconds and deliberately exclude prompts, arguments, reasoning, raw errors, and bodies.
 
-Run `npm run openrouter:check` with server credentials to verify a harmless tool request and continuation against the configured model. The script validates the requested call, supplies `{ "ok": true }` locally, replays returned reasoning, and requests a final text response. It prints only safe request IDs, usage, and whether reasoning was captured. This verifies model protocol compatibility, not analytical correctness or the future agent loop.
+Run `npm run openrouter:check` with server credentials to verify a harmless tool request and continuation against the configured model. The script validates the requested call, supplies `{ "ok": true }` locally, replays returned reasoning, and requests a final text response. It prints only safe request IDs, usage, and whether reasoning was captured. This verifies model protocol compatibility, not analytical correctness.
 
 ## Context construction
 
-`createContext()` in `server/config/context.ts` composes a synchronous context builder and the OpenRouter request measurer. The conversation service will supply a repository `loadHistory()` snapshot, the active target run ID, prepared instruction strings, and request settings (tools, selection, output ceiling, deadline, and abort signal). Call the builder to get model messages, included event/evidence IDs, excluded incomplete interactions, and measurement metadata. This foundation is separate from the current browser chat endpoint.
+`createContext()` in `server/config/context.ts` composes a synchronous context builder and the OpenRouter request measurer. The conversation service supplies a repository `loadHistory()` snapshot, the active target run ID, prepared instruction strings, and request settings (tools, selection, output ceiling, deadline, and abort signal). Call the builder to get model messages, included event/evidence IDs, excluded incomplete interactions, and measurement metadata. This context is used for each new conversational analysis attempt.
 
 Reconstruction validates referenced evidence ownership against the result event’s conversation and run, run/event ownership, user-message and retry references, attempt order, terminal outcomes, and call/result pairing. Each assistant call batch and every matching result forms one interaction. Selection keeps every complete interaction. Incomplete batches from failed, cancelled, or interrupted attempts are omitted together and reported; incomplete active batches fail explicitly. Stored history remains unchanged. Retries place the original user question at the retry position without inserting another stored user event.
 
-Projection resolves selected evidence references into complete bounded results with SQL, rows, columns, semantic snapshot, declared scope, assumptions, and truncation metadata. Only results actually supplied enter `includedEvidenceIds`; an unavailable-result reference exposes no rows. `projectEvidence()` is shared with future live tool delivery. Terminal tool-result projections include the saved acknowledgment and validated outcome, so accepted answers and clarification choices survive minimal acknowledgments. Failed attempts include application status without raw diagnostic text.
+Projection resolves selected evidence references into complete bounded results with SQL, rows, columns, semantic snapshot, declared scope, assumptions, and truncation metadata. Only results actually supplied enter `includedEvidenceIds`; an unavailable-result reference exposes no rows. `projectEvidence()` is shared with live tool delivery. Terminal tool-result projections include the saved acknowledgment and validated outcome, so accepted answers and clarification choices survive minimal acknowledgments. Failed attempts include application status without raw diagnostic text.
 
 All included assistant reasoning and original argument strings remain unchanged. The measurer uses the adapter's existing serialization and therefore applies the same model/provider compatibility checks and resolved-model pinning. Context overflow never truncates reasoning, rows, or old turns. A `ContextError` identifies invalid history, missing evidence, incompatible replay, invalid configuration, or context overflow.
 
@@ -158,4 +158,8 @@ Checkpoints store assistant replies before dispatch, paired tool results before 
 
 The caller owns the deadline and initial cancellation signal. The runner derives a shared abort signal for model/tool work, stops waiting for uncooperative operations, consumes late rejections, and checks the clock after awaits. Started persistence checkpoints finish before returning; a successful terminal checkpoint is the commit point and remains successful if cancellation or deadline expiry occurs during its write. Other checkpoint failures stop execution. Checkpoint adapters must complete or reject started writes; an arbitrary stalled callback is outside the runner’s execution bound. Diagnostics retain originating model, context, and checkpoint categories alongside phases, counters, and duration, never raw errors or model contents.
 
-The conversation application service still needs to connect repository operations to checkpoints and finalize failed/cancelled attempts. Actual SQL, clarification, and answer handlers also remain to be connected. `/api/chat` continues to use the basic text-only service. Fake-model tests cover orchestration without cloud credentials or live API requests.
+The conversation service connects repository operations to awaited runner checkpoints and finalizes failed, cancelled, and interrupted attempts. `createAnalysisService()` supplies the SQL, clarification, and answer tools. Fake-model tests cover orchestration without cloud credentials or live API requests.
+
+## Conversation service and browser integration
+
+See [the implementation decision record](docs/conversation-service-and-chat.md) for workflow ownership, API contracts, duplicate prevention, browser recovery, alternatives, and acceptance scenarios.

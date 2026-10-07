@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { and, asc, eq, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
+import { conversationRevision, revisionSchema } from "../../../shared/conversations";
 import { assistantMessageSchema, type ToolCall } from "../../agent/contracts";
 import { inspectMessageSequence, type MessageSequenceEntry } from "../../agent/message-sequence";
 import { transcriptSequence } from "../../conversations/transcript";
@@ -29,6 +30,7 @@ const startRunSchema = z.strictObject({
   message: z.string().trim().min(1).max(2_000),
   deadline: z.number().int().nonnegative().safe(),
   versions: runVersionsSchema,
+  expectedRevision: revisionSchema,
 });
 
 const retryRunSchema = startRunSchema.omit({ message: true }).extend({ runId: identitySchema });
@@ -39,8 +41,8 @@ const finishRunSchema = z.strictObject({
 
 type Options = { databasePath: string; now?: () => number };
 
-function conflict(message: string): never {
-  throw new ConversationRepositoryError("conflict", message);
+function conflict(message: string, conflictReason?: ConversationRepositoryError["conflictReason"]): never {
+  throw new ConversationRepositoryError("conflict", message, { conflictReason });
 }
 
 function decode<T>(schema: z.ZodType<T>, encoded: string): T {
@@ -288,13 +290,20 @@ export function openConversationRepository(options: Options): ConversationReposi
       return undefined;
     }
     if (row.requestJson !== requestJson) {
-      conflict("The submission ID was already used for different input.");
+      conflict("The submission ID was already used for different input.", "submission_mismatch");
     }
     return { run: readRun(row), created: false };
   }
 
   function createRun(input: z.infer<typeof retryRunSchema> | z.infer<typeof startRunSchema>, requestJson: string, source?: ConversationRun) {
     const timestamp = now();
+    const runCount = db.select({ count: sql<number>`count(*)` }).from(runs)
+      .where(eq(runs.conversationId, input.conversationId)).get()?.count ?? 0;
+    const lastSequence = db.select({ sequence: sql<number>`coalesce(max(${events.sequence}), 0)` }).from(events)
+      .where(eq(events.conversationId, input.conversationId)).get()?.sequence ?? 0;
+    if (input.expectedRevision !== conversationRevision(runCount, lastSequence)) {
+      conflict("Conversation changed. Review the refreshed history before sending.", "stale_revision");
+    }
     if (input.deadline <= timestamp) {
       conflict("A new run needs a future deadline.");
     }
@@ -302,7 +311,7 @@ export function openConversationRepository(options: Options): ConversationReposi
       eq(runs.conversationId, input.conversationId), eq(runs.status, "running"),
     )).get();
     if (active) {
-      conflict("This conversation already has an active run.");
+      conflict("This conversation already has an active run.", "active_run");
     }
     const run: ConversationRun = {
       id: randomUUID(),
@@ -399,6 +408,20 @@ export function openConversationRepository(options: Options): ConversationReposi
     getConversation(conversationId) {
       return perform(() => getConversation(identitySchema.parse(conversationId)));
     },
+    findSubmission(input) {
+      return perform(() => connection.transaction(() => {
+        const parsed = z.strictObject({
+          conversationId: identitySchema,
+          clientMessageId: identitySchema,
+          operation: z.discriminatedUnion("kind", [
+            z.strictObject({ kind: z.literal("message"), message: z.string().trim().min(1).max(2_000) }),
+            z.strictObject({ kind: z.literal("retry"), runId: identitySchema }),
+          ]),
+        }).parse(input);
+        getConversation(parsed.conversationId);
+        return findSubmission(parsed.conversationId, parsed.clientMessageId, canonicalJson(parsed.operation))?.run ?? null;
+      }).deferred());
+    },
     startRun(input) {
       return perform(() => transaction(() => {
         const parsed = startRunSchema.parse(input);
@@ -418,10 +441,23 @@ export function openConversationRepository(options: Options): ConversationReposi
         }
         const source = getRun(parsed.runId);
         if (source.conversationId !== parsed.conversationId) {
-          conflict("The retried run belongs to another conversation.");
+          conflict("The retried run belongs to another conversation.", "invalid_retry");
         }
         if (!["failed", "cancelled", "interrupted"].includes(source.status)) {
-          conflict("Only a failed, cancelled, or interrupted run can be retried.");
+          conflict("Only a failed, cancelled, or interrupted run can be retried.", "invalid_retry");
+        }
+        // Terminal event sequence identifies the latest attempt without relying
+        // on timestamps or random UUID ordering. Eventless retries are active.
+        const lastEvent = db.select().from(events)
+          .where(eq(events.conversationId, parsed.conversationId))
+          .orderBy(sql`${events.sequence} desc`).get();
+        const activeRun = db.select({ id: runs.id }).from(runs)
+          .where(and(eq(runs.conversationId, parsed.conversationId), eq(runs.status, "running"))).get();
+        if (activeRun) {
+          conflict("This conversation already has an active run.", "active_run");
+        }
+        if (lastEvent?.runId !== source.id) {
+          conflict("Only the latest attempt can be retried.", "invalid_retry");
         }
         return createRun(parsed, requestJson, source);
       }));
@@ -496,10 +532,12 @@ export function openConversationRepository(options: Options): ConversationReposi
         return readEvidence(row);
       });
     },
-    interruptExpiredRuns(timestamp) {
+    interruptExpiredRuns(timestamp, graceMs = 0) {
       return perform(() => transaction(() => {
         z.number().int().nonnegative().safe().parse(timestamp);
-        const expired = db.select().from(runs).where(and(eq(runs.status, "running"), lte(runs.deadline, timestamp))).all();
+        z.number().int().nonnegative().safe().parse(graceMs);
+        const cutoff = Math.max(0, timestamp - graceMs);
+        const expired = db.select().from(runs).where(and(eq(runs.status, "running"), lte(runs.deadline, cutoff))).all();
         for (const run of expired) {
           finalize(run.id, {
             outcome: { kind: "failure", status: "interrupted", error: { code: "interrupted", message: "The run ended without a saved outcome." } },

@@ -152,6 +152,9 @@ export function sanitizeBigQueryError(error: unknown): DataQueryError {
     }
   }
 
+  if (reasons.includes("invalidQuery")) {
+    return new DataQueryError("invalid_query", "BigQuery rejected the query. Check the supplied historical schema, field types, and SQL expressions.");
+  }
   if (reasons.includes("billingTierLimitExceeded") || reasons.includes("quotaExceeded")) {
     return new DataQueryError("processing_limit", "BigQuery rejected the processing or quota limit. Narrow the query.");
   }

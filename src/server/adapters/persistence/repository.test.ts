@@ -1,3 +1,4 @@
+import { projectConversation } from "../../conversations/display";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ function evidenceFixture(): EvidenceInput {
 
 async function start(repository: ConversationRepository, conversationId?: string) {
   const conversation = conversationId ? await repository.getConversation(conversationId) : await repository.createConversation();
-  const input = { conversationId: conversation.id, clientMessageId: randomUUID(), message: "December revenue?", deadline: 2_000, versions };
+  const input = { conversationId: conversation.id, clientMessageId: randomUUID(), message: "December revenue?", deadline: 2_000, versions, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision };
   const { run } = await repository.startRun(input);
   return { conversation, input, run };
 }
@@ -137,7 +138,7 @@ describe("SQLite conversation repository", () => {
     });
     repository.close();
     const reopened = open();
-    await reopened.startRun({ conversationId: conversation.id, clientMessageId: randomUUID(), message: "December", deadline: 2_000, versions });
+    await reopened.startRun({ conversationId: conversation.id, clientMessageId: randomUUID(), message: "December", deadline: 2_000, versions, expectedRevision: projectConversation(await reopened.loadHistory(conversation.id)).revision });
     const history = await reopened.loadHistory(conversation.id);
     expect(history.runs.map(item => item.status).sort()).toEqual(["running", "waiting_for_user"]);
     expect(history.events.at(-1)?.payload).toEqual({ kind: "user_message", content: "December" });
@@ -158,7 +159,7 @@ describe("SQLite conversation repository", () => {
     const { conversation, run } = await start(repository);
     await repository.appendAssistant(run.id, call("unfinished"));
     await repository.finishRun(run.id, { outcome: failure });
-    const input = { conversationId: conversation.id, runId: run.id, clientMessageId: randomUUID(), deadline: 2_000, versions };
+    const input = { conversationId: conversation.id, runId: run.id, clientMessageId: randomUUID(), deadline: 2_000, versions, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision };
     const retry = await repository.retryRun(input);
     expect(retry.run).toMatchObject({ retryOfRunId: run.id, userMessageEventId: run.userMessageEventId, status: "running" });
     expect(await repository.retryRun(input)).toEqual({ ...retry, created: false });
@@ -194,7 +195,7 @@ describe("SQLite conversation repository", () => {
     await repository.appendAssistant(second.run.id, call("query"));
     await expect(repository.recordToolResult(second.run.id, result)).rejects.toMatchObject({ code: "conflict" });
     await expect(repository.getEvidence(second.conversation.id, evidence.evidence.resultId)).rejects.toMatchObject({ code: "not_found" });
-    await expect(repository.retryRun({ conversationId: second.conversation.id, runId: first.run.id, clientMessageId: randomUUID(), deadline: 2_000, versions })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.retryRun({ conversationId: second.conversation.id, runId: first.run.id, clientMessageId: randomUUID(), deadline: 2_000, versions, expectedRevision: "v1:0:0" })).rejects.toMatchObject({ code: "conflict" });
   });
 
   it("finalizes atomically and idempotently while rejecting unmatched pending calls", async () => {

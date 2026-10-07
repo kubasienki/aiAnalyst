@@ -94,6 +94,7 @@ export interface AgentModel {
 export const recoverableToolErrorSchema = z.strictObject({
   code: z.string().regex(/^[a-z0-9_]{1,100}$/),
   message: z.string().min(1).max(2_000),
+  details: z.record(z.string(), jsonValueSchema).optional(),
 });
 
 export type RecoverableToolError = z.infer<typeof recoverableToolErrorSchema>;

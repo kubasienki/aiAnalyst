@@ -55,5 +55,12 @@ export function resolveAction<TContext, TOutcome, TArtifact>(
 }
 
 export function errorContent(error: RecoverableToolError): JsonValue {
-  return { ok: false, error: { code: error.code, message: error.message } };
+  return {
+    ok: false,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    },
+  };
 }

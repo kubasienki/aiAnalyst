@@ -3,7 +3,7 @@ import type { ModelMessage } from "../agent/contracts";
 import { jsonValueSchema, type JsonValue } from "../contracts/json";
 import type { ConversationEvent } from "../conversations/contracts";
 import { ContextError, type ContextSelection, type ReconstructedHistory } from "./contracts";
-import { projectEvidence } from "./evidence";
+import { projectEvidence, projectUnavailableEvidence } from "./evidence";
 
 function projectResult(
   event: ConversationEvent,
@@ -16,7 +16,7 @@ function projectResult(
   const payload = event.payload.result.payload;
   if (payload.kind === "evidence_unavailable") {
     // The ID is a retrieval reference, not proof the model has seen its rows.
-    return { kind: payload.kind, evidenceId: payload.evidenceId, content: payload.content };
+    return projectUnavailableEvidence(payload.evidenceId, payload.content);
   }
   if (payload.kind === "evidence") {
     const evidence = history.evidence.get(payload.evidenceId);

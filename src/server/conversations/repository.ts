@@ -6,13 +6,16 @@ import type {
 } from "./contracts";
 
 export class ConversationRepositoryError extends Error {
+  public readonly conflictReason?: "stale_revision" | "active_run" | "invalid_retry" | "submission_mismatch";
+
   constructor(
     public readonly code: "not_found" | "conflict" | "invalid_input" | "invalid_record" | "unavailable",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { conflictReason?: ConversationRepositoryError["conflictReason"] },
   ) {
     super(message, options);
     this.name = "ConversationRepositoryError";
+    this.conflictReason = options?.conflictReason;
   }
 }
 
@@ -22,6 +25,13 @@ export type StartRunInput = {
   message: string;
   deadline: number;
   versions: RunVersions;
+  expectedRevision: string;
+};
+
+export type SubmissionLookup = {
+  conversationId: string;
+  clientMessageId: string;
+  operation: { kind: "message"; message: string } | { kind: "retry"; runId: string };
 };
 
 export type RetryRunInput = Omit<StartRunInput, "message"> & { runId: string };
@@ -38,6 +48,7 @@ export type ConversationHistory = {
 export interface ConversationRepository {
   createConversation(): Promise<Conversation>;
   getConversation(conversationId: string): Promise<Conversation>;
+  findSubmission(input: SubmissionLookup): Promise<ConversationRun | null>;
   startRun(input: StartRunInput): Promise<StartRunResult>;
   retryRun(input: RetryRunInput): Promise<StartRunResult>;
   appendAssistant(runId: string, message: AssistantMessage): Promise<ConversationEvent>;
@@ -46,6 +57,6 @@ export interface ConversationRepository {
   finishRun(runId: string, input: FinishRunInput): Promise<ConversationRun>;
   loadHistory(conversationId: string): Promise<ConversationHistory>;
   getEvidence(conversationId: string, evidenceId: string): Promise<StoredEvidence>;
-  interruptExpiredRuns(now: number): Promise<number>;
+  interruptExpiredRuns(now: number, graceMs?: number): Promise<number>;
   close(): void;
 }

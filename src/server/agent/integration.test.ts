@@ -1,3 +1,4 @@
+import { projectConversation } from "../conversations/display";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -82,7 +83,7 @@ async function fixture() {
         async handle(argumentsValue, invocation) {
           const state = invocation.applicationContext;
           state.execution.signal = invocation.signal;
-          const result = await query(argumentsValue, state.execution);
+          const result = await query({ sql: argumentsValue.sql }, state.execution);
           if (!result.ok) {
             return { kind: "error", error: result.error };
           }
@@ -118,7 +119,7 @@ async function fixture() {
 
   async function start(message: string): Promise<ConversationRun> {
     const result = await repository.startRun({
-      conversationId: conversation.id, clientMessageId: randomUUID(), message,
+      conversationId: conversation.id, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message,
       deadline: Date.now() + 120_000, versions,
     });
     return result.run;
@@ -198,7 +199,7 @@ async function fixture() {
     },
     async retry(run: ConversationRun) {
       return (await repository.retryRun({
-        conversationId: conversation.id, runId: run.id, clientMessageId: randomUUID(),
+        conversationId: conversation.id, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision, runId: run.id, clientMessageId: randomUUID(),
         deadline: Date.now() + 120_000, versions,
       })).run;
     },
@@ -220,7 +221,7 @@ describe("composed agent foundations", () => {
     const run = await f.start("December revenue?");
     const complete = vi.fn(async (request: ModelRequest) => {
       if (request.messages.at(-1)?.role === "user") {
-        return response(toolCall("run_sql", { sql: REFERENCE_QUERIES.decemberRevenue }));
+        return response(toolCall("run_sql", { intent: "December purchase revenue in USD", sql: REFERENCE_QUERIES.decemberRevenue }));
       }
       const evidence = (await f.history()).evidence[0];
       return response(toolCall("finish_answer", answerArguments([evidence.evidence.resultId])));

@@ -1,3 +1,4 @@
+import { projectConversation } from "../conversations/display";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -320,7 +321,7 @@ describe("context from reopened SQLite history", () => {
     repositories.push(repository);
     const conversation = await repository.createConversation();
     const { run } = await repository.startRun({
-      conversationId: conversation.id, clientMessageId: randomUUID(), message: "December revenue?",
+      conversationId: conversation.id, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message: "December revenue?",
       deadline: Date.now() + 120_000, versions,
     });
     await repository.appendAssistant(run.id, {
@@ -355,7 +356,7 @@ describe("context from reopened SQLite history", () => {
     repositories.push(repository);
     const conversation = await repository.createConversation();
     const clarificationRun = await repository.startRun({
-      conversationId: conversation.id, clientMessageId: randomUUID(), message: "Revenue?",
+      conversationId: conversation.id, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message: "Revenue?",
       deadline: Date.now() + 120_000, versions,
     });
     const outcome: RunOutcome = {
@@ -370,7 +371,7 @@ describe("context from reopened SQLite history", () => {
     const reopened = openConversationRepository({ databasePath });
     repositories.push(reopened);
     const reply = await reopened.startRun({
-      conversationId: conversation.id, clientMessageId: randomUUID(), message: "December",
+      conversationId: conversation.id, expectedRevision: projectConversation(await reopened.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message: "December",
       deadline: Date.now() + 120_000, versions,
     });
     let history = await reopened.loadHistory(conversation.id);
@@ -386,7 +387,7 @@ describe("context from reopened SQLite history", () => {
     const retriedRepository = openConversationRepository({ databasePath });
     repositories.push(retriedRepository);
     const retry = await retriedRepository.retryRun({
-      conversationId: conversation.id, runId: reply.run.id, clientMessageId: randomUUID(),
+      conversationId: conversation.id, expectedRevision: projectConversation(await retriedRepository.loadHistory(conversation.id)).revision, runId: reply.run.id, clientMessageId: randomUUID(),
       deadline: Date.now() + 120_000, versions,
     });
     history = await retriedRepository.loadHistory(conversation.id);
@@ -406,7 +407,7 @@ describe("context from reopened SQLite history", () => {
     const repository = openConversationRepository({ databasePath });
     repositories.push(repository);
     const conversation = await repository.createConversation();
-    const { run } = await repository.startRun({ conversationId: conversation.id, clientMessageId: randomUUID(), message: "December revenue?", deadline: Date.now() + 120_000, versions });
+    const { run } = await repository.startRun({ conversationId: conversation.id, expectedRevision: projectConversation(await repository.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message: "December revenue?", deadline: Date.now() + 120_000, versions });
     const evidence = evidenceInput();
     await repository.appendAssistant(run.id, { ...call("query"), providerReplay: {
       origin: { model: versions.model }, reasoning: "preserved", reasoningDetails: [{ signature: "signed", data: "opaque" }],
@@ -418,7 +419,7 @@ describe("context from reopened SQLite history", () => {
     repository.close();
     const reopened = openConversationRepository({ databasePath });
     repositories.push(reopened);
-    const followUp = await reopened.startRun({ conversationId: conversation.id, clientMessageId: randomUUID(), message: "Mobile only?", deadline: Date.now() + 120_000, versions });
+    const followUp = await reopened.startRun({ conversationId: conversation.id, expectedRevision: projectConversation(await reopened.loadHistory(conversation.id)).revision, clientMessageId: randomUUID(), message: "Mobile only?", deadline: Date.now() + 120_000, versions });
     const history = await reopened.loadHistory(conversation.id);
     const context = build({ history, targetRunId: followUp.run.id, instructions: ["Analyst instructions"], requestSettings: settings() });
     expect(context.includedEvidenceIds).toEqual([evidence.evidence.resultId]);

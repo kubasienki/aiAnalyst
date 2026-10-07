@@ -60,9 +60,11 @@ export type QueryEvidence = {
 };
 
 export type QueryErrorCode =
-  | "invalid_input" | "rejected_sql" | "unsupported_sql" | "processing_limit"
+  | "invalid_input" | "invalid_query" | "rejected_sql" | "unsupported_sql" | "processing_limit"
   | "execution_failed" | "result_size" | "cancelled" | "deadline" | "budget_exhausted";
 
 export type QueryOutcome =
   | { ok: true; evidence: QueryEvidence }
   | { ok: false; error: { code: QueryErrorCode; message: string; jobId?: string } };
+
+export type QueryExecutor = (request: { sql: unknown }, context: ExecutionContext) => Promise<QueryOutcome>;
