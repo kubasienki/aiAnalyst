@@ -372,7 +372,7 @@ afterEach(() => {
 
 describe("context from reopened SQLite history", () => {
   it("preserves protocol notes as system context without manufacturing user turns", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "hockeystack-context-note-"));
+    const directory = mkdtempSync(join(tmpdir(), "analyst-context-note-"));
     directories.push(directory);
     const databasePath = join(directory, "conversation.sqlite");
     const repository = openConversationRepository({ databasePath });
@@ -407,7 +407,7 @@ describe("context from reopened SQLite history", () => {
   });
 
   it("continues clarification and retries the same question after reopening", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "hockeystack-context-retry-"));
+    const directory = mkdtempSync(join(tmpdir(), "analyst-context-retry-"));
     directories.push(directory);
     const databasePath = join(directory, "conversation.sqlite");
     const repository = openConversationRepository({ databasePath });
@@ -459,7 +459,7 @@ describe("context from reopened SQLite history", () => {
   });
 
   it("reconstructs query, reasoning, terminal outcome, and follow-up without writing records", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "hockeystack-context-"));
+    const directory = mkdtempSync(join(tmpdir(), "analyst-context-"));
     directories.push(directory);
     const databasePath = join(directory, "conversation.sqlite");
     const repository = openConversationRepository({ databasePath });

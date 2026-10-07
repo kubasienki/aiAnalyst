@@ -48,7 +48,7 @@ function answerArguments(evidenceIds: string[] = []) {
 }
 
 async function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "hockeystack-agent-integration-"));
+  const directory = mkdtempSync(join(tmpdir(), "analyst-agent-integration-"));
   directories.push(directory);
   const databasePath = join(directory, "history.sqlite");
   let repository = open();

@@ -114,7 +114,7 @@ async function main() {
   const analyze = createAnalyst();
   const buildContext = createContext();
   const versions = { model: config.model, prompt: ANALYST_PROMPT_VERSION, tools: ANALYSIS_TOOLS_VERSION, semanticGuide: SEMANTIC_GUIDE_VERSION };
-  const directory = mkdtempSync(join(tmpdir(), "hockeystack-analyst-"));
+  const directory = mkdtempSync(join(tmpdir(), "analyst-analyst-"));
   const databasePath = join(directory, "history.sqlite");
   let repository = openConversationRepository({ databasePath });
   const report: JsonValue[] = [];

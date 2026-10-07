@@ -87,7 +87,7 @@ function prepared(model: AgentModel): PreparedConversationExecution {
 }
 
 async function fixture(complete: AgentModel["complete"] = async () => action("finish_answer", answer())) {
-  const directory = mkdtempSync(join(tmpdir(), "hockeystack-conversation-"));
+  const directory = mkdtempSync(join(tmpdir(), "analyst-conversation-"));
   directories.push(directory);
   const databasePath = join(directory, "conversation.sqlite");
   let clock = Date.now();

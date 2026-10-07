@@ -6,7 +6,7 @@
 flowchart LR
     user["Analytics user\nPerson\nAsks questions and reviews findings"]
     operator["Developer / operator\nPerson\nConfigures and investigates the application"]
-    analyst["HockeyStack Analyst\nSoftware system\nConversational analysis with persisted evidence"]
+    analyst["Analyst\nSoftware system\nConversational analysis with persisted evidence"]
     router["OpenRouter\nExternal software system\nRoutes model inference and tool-call responses"]
     warehouse["Google BigQuery\nExternal software system\nRuns jobs over the public GA4 ecommerce sample"]
     user -->|"Submits questions, clarifications, and retries; reads answers"| analyst
@@ -23,7 +23,7 @@ The user and operator are roles, not implemented accounts. The application has n
 
 | Element | Responsibility and boundary |
 | --- | --- |
-| HockeyStack Analyst | Owns submission admission, durable history, analytical tools, budgets, evidence validation, and safe browser presentation. |
+| Analyst | Owns submission admission, durable history, analytical tools, budgets, evidence validation, and safe browser presentation. |
 | OpenRouter | Supplies inference through its chat-completions API. The application validates responses and executes tools itself; OpenRouter does not access SQLite or invoke the BigQuery SDK. |
 | Google BigQuery | Hosts the sample source data and executes read-only analytical jobs. The configured Google Cloud project owns query execution and billing; `bigquery-public-data.ga4_obfuscated_sample_ecommerce` owns the source tables. |
 | Developer / operator | Supplies a model ID, API key, query project, Google Application Default Credentials, and SQLite path; uses diagnostic scripts and the development debugger. |

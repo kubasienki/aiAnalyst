@@ -4,7 +4,7 @@ import { readPersistenceConfig } from "./persistence";
 
 describe("persistence configuration", () => {
   it("uses the ignored local database path without opening a connection", () => {
-    expect(readPersistenceConfig({})).toEqual({ databasePath: resolve(".data/hockeystack.sqlite") });
+    expect(readPersistenceConfig({})).toEqual({ databasePath: resolve(".data/analyst.sqlite") });
   });
 
   it("resolves a configured path independently of model and BigQuery configuration", () => {

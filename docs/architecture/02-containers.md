@@ -6,7 +6,7 @@
 flowchart TB
     user["Analytics user\nPerson"]
     operator["Developer / operator\nPerson"]
-    subgraph system["HockeyStack Analyst — software system"]
+    subgraph system["Analyst — software system"]
         browser["Browser application\nContainer: React 19 / TypeScript / Recharts\nChat, recovery, charts and development debugger UI"]
         server["Web application server\nContainer: Next.js 16 / Node.js 22+\nPages, HTTP APIs, analyst execution and projections"]
         sqlite[("Conversation store\nContainer: embedded SQLite\nRuns, events, evidence and raw traces")]

@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 async function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "hockeystack-debug-"));
+  const directory = mkdtempSync(join(tmpdir(), "analyst-debug-"));
   directories.push(directory);
   const databasePath = join(directory, "history.sqlite");
   vi.stubEnv("SQLITE_DATABASE_PATH", databasePath);

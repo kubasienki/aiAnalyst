@@ -16,7 +16,7 @@ const directories: string[] = [];
 const observers: Database.Database[] = [];
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "hockeystack-history-"));
+  const directory = mkdtempSync(join(tmpdir(), "analyst-history-"));
   directories.push(directory);
   const databasePath = join(directory, "nested", "history.sqlite");
   let timestamp = 1_000;

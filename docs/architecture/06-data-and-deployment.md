@@ -150,7 +150,7 @@ An application host must permit outbound cloud requests and request lifetimes co
 | `GOOGLE_CLOUD_PROJECT` | Required query-job project; ADC authenticates Google requests | BigQuery configuration |
 | `BIGQUERY_LOCATION` | `US`; other values rejected for this sample | BigQuery configuration |
 | `BIGQUERY_MAX_BYTES_BILLED` | `1073741824` bytes (1 GiB) per query; dry-run estimate and execution cap | Query service / BigQuery |
-| `SQLITE_DATABASE_PATH` | `.data/hockeystack.sqlite`, resolved to absolute path | Persistence configuration |
+| `SQLITE_DATABASE_PATH` | `.data/analyst.sqlite`, resolved to absolute path | Persistence configuration |
 | `AGENT_CONTEXT_WINDOW_TOKENS` | 1,000,000 local allowance; verify against selected provider | Context configuration |
 | Context reserves | Normally 4,096 output tokens plus 2,048 safety tokens | Request measurer / context budget |
 | Run duration / finalization grace | 120,000 ms / 5,000 ms; deadline never renewed by a tool | Conversation service |

@@ -1,8 +1,8 @@
-# HockeyStack Analyst architecture
+# Analyst architecture
 
 This is the architecture of the repository as inspected on 7 October 2026, including working-tree changes. It describes implemented behavior; existing implementation plans are not evidence that a feature exists. The intended audience is developers onboarding to or maintaining the application.
 
-HockeyStack Analyst is a conversational analytics assistant for Google's public GA4 ecommerce sample. A React browser client submits questions to a Next.js Node server. The server reconstructs durable conversation context, runs a bounded model/tool loop through OpenRouter, executes guarded BigQuery queries, and saves evidence and accepted outcomes in SQLite. Browser answers include prose, analytical metadata, and optional evidence-derived charts.
+Analyst is a conversational analytics assistant for Google's public GA4 ecommerce sample. A React browser client submits questions to a Next.js Node server. The server reconstructs durable conversation context, runs a bounded model/tool loop through OpenRouter, executes guarded BigQuery queries, and saves evidence and accepted outcomes in SQLite. Browser answers include prose, analytical metadata, and optional evidence-derived charts.
 
 ## Reading order
 
@@ -21,7 +21,7 @@ HockeyStack Analyst is a conversational analytics assistant for Google's public 
 Diagrams use Mermaid inside Markdown fences. Flowcharts express C4 concepts using explicit element types, technologies, labeled relationships, and subgraph boundaries; they do not require Mermaid's experimental C4 syntax. Class diagrams show selected code relationships, sequence diagrams show temporal behavior, and the ER diagram shows storage ownership.
 
 - **Person**: a user or operator role.
-- **Software system**: HockeyStack Analyst or an external service.
+- **Software system**: Analyst or an external service.
 - **Container**: an execution environment or data store. This does not imply Docker.
 - **Component**: a responsibility implemented by modules within a container, not a separately deployed service.
 - **Code element**: an actual interface, named type, class, or function factory. Factory products are explicitly identified as such.

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { messageSubmissionSchema, retrySubmissionSchema } from "../../shared/conversations";
 
-const ACTIVE_KEY = "hockeystack.conversation.v2";
-const PENDING_KEY = "hockeystack.pending.v2";
+const ACTIVE_KEY = "analyst.conversation.v2";
+const PENDING_KEY = "analyst.pending.v2";
 export const pendingOperationSchema = z.discriminatedUnion("kind", [
   messageSubmissionSchema.extend({ kind: z.literal("message"), conversationId: z.uuid() }),
   retrySubmissionSchema.extend({ kind: z.literal("retry"), conversationId: z.uuid(), runId: z.uuid() }),

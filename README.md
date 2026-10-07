@@ -1,4 +1,4 @@
-# HockeyStack Analyst
+# Analyst
 
 Next.js App Router analytics assistant using a bounded agent loop, OpenRouter and guarded BigQuery queries.
 
@@ -121,7 +121,7 @@ Conversation routes are Node-only and open repositories explicitly per request. 
 
 The conversation repository stores conversations, execution attempts, ordered assistant/tool events, and query evidence. The conversation service now coordinates the repository, context builder, analysis service, and bounded runner.
 
-`createConversationRepository()` in `server/config/persistence.ts` explicitly opens a repository using `SQLITE_DATABASE_PATH` (default `.data/hockeystack.sqlite`). Importing modules does not open a connection. Call `close()` when its owning application or script finishes. Tests use temporary on-disk databases and verify closing/reopening without losing history.
+`createConversationRepository()` in `server/config/persistence.ts` explicitly opens a repository using `SQLITE_DATABASE_PATH` (default `.data/analyst.sqlite`). Importing modules does not open a connection. Call `close()` when its owning application or script finishes. Tests use temporary on-disk databases and verify closing/reopening without losing history.
 
 SQLite uses Drizzle and better-sqlite3 with foreign keys, WAL, and a five-second busy timeout. Writes reserve the writer lock with immediate transactions; history snapshots use deferred read transactions. The driver waits synchronously during lock contention, so the busy timeout can block the Node event loop and does not bound total operation duration. Tables and indexes are initialized with `CREATE ... IF NOT EXISTS`; there are no versioned migrations or automatic upgrades. An incompatible development database requires an explicit manual reset after closing connections. Initialization never deletes existing conversations. Keep database files, WAL/SHM files, and journals out of Git, including when configuring a custom path.
 

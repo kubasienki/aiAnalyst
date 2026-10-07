@@ -54,7 +54,7 @@ export function ChatApp() {
     <main className={styles.shell}>
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>HockeyStack</p>
+          <p className={styles.eyebrow}>Analyst</p>
           <h1>Ecommerce analyst</h1>
         </div>
         <button className={styles.secondaryButton} onClick={() => { void controller.newConversation(); }}>
