@@ -114,18 +114,23 @@ export function serializeRequest(request: ModelRequest, model: string): Record<s
   if (validated.toolSelection.kind === "specific") {
     toolChoice = { type: "function", function: { name: validated.toolSelection.name } };
   }
-  return {
+  const result: Record<string, unknown> & { model: string } = {
     // Router aliases can choose a different model on each call. Opaque reasoning
     // must return to the concrete model that produced it.
     model: replayModel ?? model,
     messages: validated.messages.map(serializeMessage),
-    tools: validated.tools.map(tool => ({ type: "function", function: tool })),
-    tool_choice: toolChoice,
-    parallel_tool_calls: false,
     provider,
     stream: false,
     max_tokens: validated.maxOutputTokens,
   };
+  // Only include tool parameters when tools are present. Sending empty tools
+  // with require_parameters triggers 404 on providers that don't advertise
+  // tool support for the requested model.
+  if (validated.tools.length > 0) {
+    result.tools = validated.tools.map(tool => ({ type: "function", function: tool }));
+    result.tool_choice = toolChoice;
+  }
+  return result;
 }
 
 function nonnegativeInteger(value: unknown): number | undefined {

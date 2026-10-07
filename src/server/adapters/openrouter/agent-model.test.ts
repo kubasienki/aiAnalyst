@@ -47,7 +47,7 @@ describe("tool-capable OpenRouter adapter", () => {
     expect(sentBody(fetcher)).toEqual({
       model: config.model, messages: [{ role: "user", content: "How much revenue?" }],
       tools: [{ type: "function", function: tools[0] }], tool_choice: "required",
-      parallel_tool_calls: false, provider: { require_parameters: true }, stream: false, max_tokens: 4_096,
+      provider: { require_parameters: true }, stream: false, max_tokens: 4_096,
     });
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: "Bearer secret-key", "Content-Type": "application/json" });
     // A normally completed text reply remains valid even if a tool was requested.
