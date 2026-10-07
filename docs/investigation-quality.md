@@ -84,3 +84,61 @@ analytical-state schema, extra planning/review agent or general investigation en
 With additional time, calibrate semantic evaluation on independent calculations,
 measure how often declared obstacles or missed open questions permit early stopping,
 and introduce richer scope or retrieval only when failures justify it.
+
+## Visual coverage follow-up
+
+`analyst-v15` / `analysis-tools-v12` prioritize useful visual coverage of the main
+findings before removing redundant charts. Trends, meaningful comparisons and
+segment differences normally receive charts without an explicit request. Earlier
+accepted charts can provide coverage when their metrics, periods, filters and
+populations match; the narrative mentions their exact saved titles and the points
+they illustrate. References remain plain prose.
+
+Chart selection stays with the analyst, numerical validation with chart preparation,
+and display with the existing UI. No new schema, investigation state, database
+migration or review call is introduced. The same execution and chart limits apply.
+A rejected chart should be repaired or simplified individually while retaining
+other valid charts; a material missing visual is explained when limits prevent it.
+This is behavioral guidance, not a mechanical guarantee of semantic visual coverage.
+
+Evaluation now checks ordinary analytical requests without chart wording, alongside
+reuse, changed scope, explicit repeat/omit requests and scalar/methodology answers.
+The live harness records display titles/statuses and verifies that accepted charts
+resolve for display. Human review still determines whether they illustrate the
+main findings. A test exercises invalid-chart repair with another valid chart
+retained, and fallback to the remaining valid chart.
+
+The intermediate `analyst-v13` live review accepted and reopened 15 turns, with
+11 charts resolving for display. Changed periods, device filters, explicit repeat
+and omit requests, and interpretation-only reuse behaved as intended. This was
+not a complete visual-quality pass: one continuation omitted useful checkout
+coverage because of its result layout, and a scalar-to-comparison follow-up returned
+only prose after producing a single wide result row. The final guidance therefore
+plans chart-compatible row grain before querying and requires reshaping useful
+comparisons when execution budget permits. An earlier v12 run exhausted its
+six-call budget after SQL and schema repairs. These remain relevant reliability
+observations; successful acceptance alone does not establish coverage.
+
+The final v15 four-turn run accepted and reopened all answers with six charts
+resolving for display: three revenue/volume/value trend charts, then three
+traffic/conversion/purchase-value comparisons. Session evidence matches the
+whole-month reference totals: December 133,368 observed / 2,116 purchasing
+sessions; January 118,380 / 1,115. The methodology turn reused evidence with one
+model call and no query or chart. The continuation tried two device queries that
+were rejected, returned a partial answer and named the earlier chart titles.
+
+This remains a qualified result. The diagnosis repeated purchase-value coverage
+and did not name the earlier revenue chart, so exact-title reuse is still
+inconsistent. An intermediate v14 diagnosis joined monthly revenue to daily
+session counts; the final prompt adds an explicit consistent-month-key rule,
+and the final run corrected that denominator error. Chart validity is enforced;
+complete semantic coverage and correct SQL grain still require evaluation.
+Reports are local ignored files: `.data/analyst-check-report.json` (final), and
+`.data/chart-coverage-v12-report.json`, `v13-report.json`, `v14-report.json` archives
+with the same `chart-coverage-` prefix. Reproduce the final sequence with
+`npm run analyst:check -- --case=investigation-continuity`.
+
+Current workspace checks passed: 400 tests, type checking, lint and diff whitespace
+checks. Other work concurrently changed shared server/test files; these checks
+cover the combined working tree. No browser rendering check was run for this
+prompt/tool-guidance change.

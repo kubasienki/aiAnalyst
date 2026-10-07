@@ -170,8 +170,17 @@ async function main() {
         assert.deepEqual(reopened, before, "Reopened SQLite exchange must remain intact");
         const supportingEvidence = reopened.evidence.filter(item => result.outcome.kind === "answer" && result.outcome.answer.evidenceIds.includes(item.evidence.resultId));
         assert.equal(supportingEvidence.length, result.outcome.answer.evidenceIds.length);
+        const displayAttempt = projectConversation(reopened).turns
+          .flatMap(turn => turn.attempts)
+          .find(attempt => attempt.id === run.id);
+        assert.ok(displayAttempt, "Accepted answer must be present in the display snapshot");
+        const chartDisplay = (displayAttempt.renderedCharts ?? []).map(chart => ({
+          title: chart.kind === "ready" ? chart.spec.title : chart.title,
+          status: chart.kind,
+        }));
+        assert.ok(chartDisplay.every(chart => chart.status === "ready"), "Accepted charts must resolve for display");
         report.push({ caseId: evaluationCase.id, reviewCriteria: evaluationCase.reviewCriteria,
-          reviewStatus: "pending", question, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics,
+          reviewStatus: "pending", question, chartDisplay, outcome: jsonValueSchema.parse(JSON.parse(JSON.stringify(result.outcome))), statistics: result.statistics,
           versions,
           contextMeasurement: jsonValueSchema.parse(context.measurement),
           toolErrors: recordedToolErrors(reopened.events.filter(event => event.runId === run.id)),
@@ -180,7 +189,7 @@ async function main() {
         mkdirSync(".data", { recursive: true });
         writeFileSync(".data/analyst-check-report.json", JSON.stringify(report, null, 2));
         console.log(`Accepted and reopened: ${question}`, { modelRequests: result.statistics.modelRequests,
-          evidenceCount: supportingEvidence.length, completeness: result.outcome.answer.completeness });
+          evidenceCount: supportingEvidence.length, chartCount: chartDisplay.length, completeness: result.outcome.answer.completeness });
       }
     }
     console.log("Analyst protocol/provenance verification passed. Analytical review is pending: assess each report entry against its reviewCriteria using the narratives, SQL and rows in .data/analyst-check-report.json. Use bigquery:verify for independent reference values.");

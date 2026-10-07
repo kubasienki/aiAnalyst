@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChartSpec } from "../../shared/charts";
 import type { AgentModel, ModelRequest, ModelResponse, ToolInvocationContext } from "../agent/contracts";
 import { createAgentRunner } from "../agent/runner";
 import { openConversationRepository } from "../adapters/persistence/repository";
@@ -193,6 +194,36 @@ describe("analytical tools", () => {
     expect(await finish.execute(answer([input.evidence.resultId]), invocation)).toMatchObject({ kind: "error", error: { code: "incomplete_evidence" } });
     expect(await finish.execute(answer([input.evidence.resultId], { completeness: "partial", limitations: ["Service returned only a prefix of rows."] }), invocation))
       .toMatchObject({ kind: "terminal", outcome: { answer: { completeness: "partial" } } });
+  });
+
+  it("repairs an invalid chart while retaining another valid chart", async () => {
+    const input = savedEvidence(evidence({
+      columns: [{ name: "month", type: "STRING" }, { name: "revenue_usd", type: "FLOAT" }],
+      rows: [{ month: "December", revenue_usd: 160555 }, { month: "January", revenue_usd: 57350 }],
+    }));
+    const invocation = toolInvocation(new Map([[input.evidence.resultId, input]]));
+    const finish = tool("finish_answer");
+    const validChart: ChartSpec = {
+      type: "bar",
+      evidenceId: input.evidence.resultId,
+      title: "Recorded revenue by month",
+      caption: "December versus January, in USD.",
+      x: { column: "month", label: "Month" },
+      series: [{ column: "revenue_usd", label: "Revenue", format: { kind: "currency", currency: "USD" } }],
+    };
+    const invalidChart: ChartSpec = {
+      ...validChart,
+      title: "Revenue comparison",
+      x: { column: "missing_month", label: "Month" },
+    };
+    expect(await finish.execute(answer([input.evidence.resultId], { charts: [validChart, invalidChart] }), invocation))
+      .toMatchObject({ kind: "error", error: { code: "invalid_chart", details: { chartIndex: 1 } } });
+    const repairedChart: ChartSpec = { ...invalidChart, x: validChart.x };
+    expect(await finish.execute(answer([input.evidence.resultId], { charts: [validChart, repairedChart] }), invocation))
+      .toMatchObject({ kind: "terminal", outcome: { answer: { charts: [validChart, repairedChart] } } });
+    // If the second visual cannot be repaired, the first remains useful.
+    expect(await finish.execute(answer([input.evidence.resultId], { charts: [validChart] }), invocation))
+      .toMatchObject({ kind: "terminal", outcome: { answer: { charts: [validChart] } } });
   });
 
   it("rejects an invalid chart before terminal acceptance and accepts a text repair", async () => {

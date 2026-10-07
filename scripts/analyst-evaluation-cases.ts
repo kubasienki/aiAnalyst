@@ -23,6 +23,8 @@ export const analystEvaluationCases: AnalystEvaluationCase[] = [
       "Necessary unresolved questions produce partial completeness, and continuing investigation is blocked only by real limits or specific obstacles.",
       "Prose leads with the conclusion once, uses minimal supporting numbers and proportionate interpretation, and surfaces only material uncertainty.",
       "Methodology reuses sufficient existing evidence rather than querying again merely to explain it.",
+      "Without explicit chart requests, performance shows a useful trend/comparison, diagnosis covers outcome and observable contributors, and continuation adds coverage of the important findings from its new test.",
+      "Earlier charts count as coverage only when their exact titles are mentioned and their scopes match; methodology adds no gratuitous charts.",
     ],
   },
   {
@@ -58,16 +60,16 @@ export const analystEvaluationCases: AnalystEvaluationCase[] = [
   {
     id: "chart-coverage-across-follow-ups",
     questions: [
-      "Chart recorded revenue for December 2020 versus January 2021.",
-      "Investigate observable contributors to that change and chart their relative changes where useful.",
+      "How did recorded revenue compare between December 2020 and January 2021?",
+      "Investigate observable contributors to that change.",
       "Explain what those findings mean for the business, using the same evidence and comparisons.",
       "Now compare November 2020 with December 2020 instead, including useful charts.",
       "Repeat the revenue comparison chart for November versus December so I can see it here.",
       "Explain the comparison again without any charts.",
     ],
     reviewCriteria: [
-      "The contributor follow-up refers to the earlier revenue chart and adds useful new contributor coverage rather than repeating revenue.",
-      "Relative-change bars use compatible percentage formats, SQL-derived values and captions identifying periods and non-additivity.",
+      "The contributor follow-up names the exact earlier revenue chart title and adds useful new contributor coverage without requiring an explicit chart request.",
+      "Any relative-change bars use compatible percentage formats, SQL-derived values and captions identifying periods and non-additivity; ordinary comparisons are also valid when they cover the main findings.",
       "An interpretation-only follow-up adds no charts when prior charts already cover the findings.",
       "Changed periods warrant fresh comparisons; explicit repeat and omit requests are honored.",
       "Narratives are understandable independently and do not claim a primary driver from relative changes alone.",
@@ -102,8 +104,8 @@ export const analystEvaluationCases: AnalystEvaluationCase[] = [
     ],
     reviewCriteria: [
       "The scalar answer gives revenue, period, currency and definition concisely.",
-      "The comparison uses comparable metrics and reports absolute and percentage changes correctly.",
-      "Device contributions compare changes between periods, rather than ranking December totals; disclose any unreconciled totals.",
+      "The comparison uses comparable metrics, reports absolute and percentage changes correctly, and adds a useful chart without being asked; the scalar turn needs no chart.",
+      "Device contributions compare changes between periods, rather than ranking December totals; disclose any unreconciled totals and visualize the supported segment differences.",
       "The narrative explains the business meaning and charts support specific findings.",
     ],
   },

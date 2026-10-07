@@ -152,7 +152,7 @@ export function createAnalysisTools(executeQuery: QueryExecutor): AnalysisTool[]
             kind: "error",
             error: {
               code: chartResult.error.code,
-              message: chartResult.error.message,
+              message: `${chartResult.error.message} Repair the identified chart or use a simpler supported visualization. Preserve other valid charts; remove only visuals that cannot be supported within the remaining budget.`,
               details: { chartIndex: chartResult.error.chartIndex },
             },
             repeatPolicy: "unchanged_arguments",
