@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { safeIdentifier } from "../contracts/identity";
 import { DataQueryError } from "./errors";
 import { checkExecution, withinDeadline } from "./execution-context";
 import { SEMANTIC_GUIDE_VERSION } from "./semantic-guide";
@@ -51,6 +52,10 @@ async function collectResults(
 ): Promise<CollectedResult> {
   let columns: QueryColumn[] = [];
   const rows: Record<string, JsonValue>[] = [];
+  // Equals payloadSize(columns, rows) without re-serializing collected rows:
+  // each row adds its own JSON plus a separating comma after the first.
+  let schemaBytes = payloadSize(columns, []);
+  let payloadBytes = schemaBytes;
   let pageToken: string | undefined;
   let truncationReason: CollectedResult["truncationReason"];
 
@@ -71,8 +76,10 @@ async function collectResults(
 
     if (!columns.length) {
       columns = page.columns;
+      schemaBytes = payloadSize(columns, []);
+      payloadBytes = schemaBytes;
     }
-    if (payloadSize(columns, rows) > byteLimit) {
+    if (payloadBytes > byteLimit) {
       throw new DataQueryError("result_size", "Result schema exceeds the payload budget.");
     }
 
@@ -81,16 +88,18 @@ async function collectResults(
         truncationReason = "row_limit";
         break;
       }
-      if (payloadSize(columns, [row]) > byteLimit) {
+      const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8");
+      if (schemaBytes + rowBytes > byteLimit) {
         throw new DataQueryError("result_size", "A result row exceeds the payload budget. Select smaller values.");
       }
 
-      rows.push(row);
-      if (payloadSize(columns, rows) > byteLimit) {
-        rows.pop();
+      const separatorBytes = rows.length > 0 ? 1 : 0;
+      if (payloadBytes + separatorBytes + rowBytes > byteLimit) {
         truncationReason = "byte_limit";
         break;
       }
+      rows.push(row);
+      payloadBytes += separatorBytes + rowBytes;
     }
 
     if (truncationReason || !page.nextPageToken) {
@@ -102,7 +111,7 @@ async function collectResults(
   return {
     columns,
     rows,
-    payloadBytes: payloadSize(columns, rows),
+    payloadBytes,
     ...(truncationReason ? { truncationReason } : {}),
   };
 }
@@ -122,10 +131,7 @@ export function createQueryService(dependencies: QueryServiceDependencies) {
     let phase: QueryPhase = "validation";
 
     function reportFailure(category: QueryDiagnostic["category"], operation: QueryPhase, activeJob = job): void {
-      const identifier = activeJob?.id;
-      const safeJobId = typeof identifier === "string" && /^[a-zA-Z0-9._:/-]{1,200}$/.test(identifier)
-        ? identifier
-        : undefined;
+      const safeJobId = safeIdentifier(activeJob?.id);
       try {
         dependencies.reportFailure?.({
           category,

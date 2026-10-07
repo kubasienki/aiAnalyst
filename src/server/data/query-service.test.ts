@@ -59,6 +59,16 @@ describe("query service", () => {
     const { execute } = fixture([{ complete: true, columns, rows: Array.from({ length: 200 }, () => ({ revenue_usd: 1 })) }]);
     expect(await execute({ sql }, createExecutionContext())).toMatchObject({ ok: true, evidence: { truncated: false } });
   });
+  it("reports the serialized size of the collected result across pages", async () => {
+    const rows = [{ revenue_usd: 1 }, { revenue_usd: 22 }, { revenue_usd: 333 }];
+    const { execute } = fixture([
+      { complete: true, columns, rows: rows.slice(0, 2), nextPageToken: "next" },
+      { complete: true, columns, rows: rows.slice(2) },
+    ]);
+    const result = await execute({ sql }, createExecutionContext());
+    expect(result).toMatchObject({ ok: true, evidence: { rows } });
+    if (result.ok) expect(result.evidence.payloadBytes).toBe(Buffer.byteLength(JSON.stringify({ columns, rows })));
+  });
   it("stops at the byte limit and records omitted rows", async () => {
     const { execute } = fixture([{ complete: true, columns, rows: [{ revenue_usd: 1 }, { revenue_usd: 2 }, { revenue_usd: 3 }] }]);
     const context = createExecutionContext(); context.budget.maxResultBytes = Buffer.byteLength(JSON.stringify({ columns, rows: [{ revenue_usd: 1 }] }));
