@@ -2,6 +2,8 @@
 
 A conversational analytics app built with Next.js. It answers questions about Google's public GA4 ecommerce sample using OpenRouter and guarded BigQuery queries. Conversations and query evidence are stored in SQLite.
 
+Assumptions, cuts, and what I would do next are in the [decision log](docs/assessment-decision-log.md).
+
 ## Run locally
 
 Use Node.js 22 or newer.
