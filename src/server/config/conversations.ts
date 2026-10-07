@@ -1,6 +1,9 @@
 import "server-only";
 import { createConversationRepository } from "./persistence";
-import { createConversationService, ConversationServiceError, type PreparedConversationExecution } from "../conversations/service";
+import {
+  createConversationService, ConversationServiceError,
+  type ConversationService, type PreparedConversationExecution,
+} from "../conversations/service";
 import { createContext } from "./context";
 import { createAnalyst } from "./analysis";
 import { readOpenRouterConfig } from "./openrouter";
@@ -28,14 +31,16 @@ export function prepareConversationExecution(): PreparedConversationExecution {
   }
 }
 
-export function openConversationApplication() {
-  const repository = createConversationRepository();
-  return {
-    service: createConversationService({
-      repository,
-      prepareExecution: prepareConversationExecution,
-      reportFailure: diagnostic => console.error("Conversation execution failed", diagnostic),
-    }),
-    close: () => repository.close(),
-  };
+// One SQLite connection per server process, opened on first use. Opening it per
+// request would rerun schema initialization on every status poll. A failed open
+// is not cached, so the next request retries.
+let conversationService: ConversationService | undefined;
+
+export function getConversationService(): ConversationService {
+  conversationService ??= createConversationService({
+    repository: createConversationRepository(),
+    prepareExecution: prepareConversationExecution,
+    reportFailure: diagnostic => console.error("Conversation execution failed", diagnostic),
+  });
+  return conversationService;
 }

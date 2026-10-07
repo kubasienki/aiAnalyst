@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { apiErrorSchema, chatStreamEventSchema, type ApiError, type ChatStreamEvent } from "../../shared/conversations";
-import { openConversationApplication } from "./conversations";
+import { getConversationService } from "./conversations";
 import { ConversationRepositoryError } from "../conversations/repository";
 import { ConversationServiceError, type AdmittedSubmission, type ConversationService } from "../conversations/service";
 
@@ -42,18 +42,14 @@ export async function withConversationApplication(
   action: (service: ConversationService) => Promise<unknown>,
   status = 200,
 ): Promise<Response> {
-  let application: ReturnType<typeof openConversationApplication> | undefined;
   try {
-    application = openConversationApplication();
-    return Response.json(await action(application.service), { status, headers: noCacheHeaders });
+    return Response.json(await action(getConversationService()), { status, headers: noCacheHeaders });
   } catch (error) {
     return errorResponse(error);
-  } finally {
-    application?.close();
   }
 }
 
-function streamExecution(admitted: AdmittedSubmission, request: Request, close: () => void): Response {
+function streamExecution(admitted: AdmittedSubmission, request: Request): Response {
   const execution = admitted.execute;
   if (!execution) {
     throw new Error("A newly admitted submission needs an executor.");
@@ -76,8 +72,7 @@ function streamExecution(admitted: AdmittedSubmission, request: Request, close: 
           const validated = chatStreamEventSchema.parse(event);
           controller.enqueue(encoder.encode(`event: ${validated.kind}\ndata: ${JSON.stringify(validated)}\n\n`));
         } catch {
-          // Losing the browser cannot make checkpoint persistence optional.
-          // Abort execution and let its awaited cleanup settle before closing DB.
+          // The browser is gone. Cancel the run; its outcome is still persisted.
           cancellation.abort();
         }
       }
@@ -91,7 +86,6 @@ function streamExecution(admitted: AdmittedSubmission, request: Request, close: 
           } });
         } finally {
           request.signal.removeEventListener("abort", abort);
-          close();
           try {
             controller.close();
           } catch {
@@ -117,26 +111,17 @@ export async function handleSubmission(
   request: Request,
   admit: (service: ConversationService, body: unknown) => Promise<AdmittedSubmission>,
 ): Promise<Response> {
-  let application: ReturnType<typeof openConversationApplication> | undefined;
-  let streamOwnsApplication = false;
   try {
     const body: unknown = await request.json();
-    application = openConversationApplication();
-    const admitted = await admit(application.service, body);
+    const admitted = await admit(getConversationService(), body);
     if (!admitted.created) {
       return Response.json({ runId: admitted.run.id, snapshot: admitted.snapshot }, {
         status: admitted.run.status === "running" ? 202 : 200,
         headers: noCacheHeaders,
       });
     }
-    const response = streamExecution(admitted, request, application.close);
-    streamOwnsApplication = true;
-    return response;
+    return streamExecution(admitted, request);
   } catch (error) {
     return errorResponse(error);
-  } finally {
-    if (!streamOwnsApplication) {
-      application?.close();
-    }
   }
 }
