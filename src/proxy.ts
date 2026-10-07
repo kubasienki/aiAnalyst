@@ -26,7 +26,26 @@ export function proxy(request: NextRequest) {
   const changesState = !["GET", "HEAD", "OPTIONS"].includes(request.method);
   const requestOrigin = request.headers.get("origin");
   const hasCrossSiteFetch = request.headers.get("sec-fetch-site") === "cross-site";
-  const originDoesNotMatch = requestOrigin !== null && requestOrigin !== request.nextUrl.origin;
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const publicHost = forwardedHost || request.headers.get("host");
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const publicProtocol = forwardedProtocol || request.nextUrl.protocol.replace(":", "");
+  let expectedOrigin = request.nextUrl.origin;
+  if (publicHost) {
+    try {
+      expectedOrigin = new URL(`${publicProtocol}://${publicHost}`).origin;
+    } catch {
+      // Keep the request URL as the fallback if proxy metadata is malformed.
+    }
+  }
+  let originDoesNotMatch = false;
+  if (requestOrigin !== null) {
+    try {
+      originDoesNotMatch = new URL(requestOrigin).origin !== expectedOrigin;
+    } catch {
+      originDoesNotMatch = true;
+    }
+  }
 
   if (changesState && (originDoesNotMatch || (requestOrigin === null && hasCrossSiteFetch))) {
     return new NextResponse("Cross-site access is not allowed.", {

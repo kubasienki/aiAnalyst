@@ -85,4 +85,20 @@ describe("assessment access protection", () => {
     });
     expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
   });
+
+  it("matches the public origin when Railway forwards requests over HTTP", () => {
+    vi.stubEnv("BASIC_AUTH_USERNAME", credentials.BASIC_AUTH_USERNAME);
+    vi.stubEnv("BASIC_AUTH_PASSWORD", credentials.BASIC_AUTH_PASSWORD);
+    const request = new NextRequest("http://10.0.0.8:3000/api/conversations", {
+      method: "POST",
+      headers: {
+        authorization,
+        origin: "https://assessment.example",
+        host: "10.0.0.8:3000",
+        "x-forwarded-host": "assessment.example",
+        "x-forwarded-proto": "https",
+      },
+    });
+    expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
+  });
 });
